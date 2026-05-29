@@ -31,6 +31,12 @@
             </intent-filter>
         </activity>
 
+        <activity
+            android:name=".MediaViewerActivity"
+            android:exported="false"
+            android:theme="@style/Theme.Files"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize" />
+
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.fileprovider"

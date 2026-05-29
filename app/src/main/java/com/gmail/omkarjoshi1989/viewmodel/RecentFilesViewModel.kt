@@ -13,9 +13,12 @@ import java.io.File
 
 data class RecentFilesUiState(
     val files: List<File> = emptyList(),
+    val filteredFiles: List<File> = emptyList(),
     val isLoading: Boolean = true,
     val isRefreshing: Boolean = false,
-    val totalFilesScanned: Int = 0
+    val totalFilesScanned: Int = 0,
+    val searchQuery: String = "",
+    val isSearchActive: Boolean = false
 )
 
 class RecentFilesViewModel : ViewModel() {
@@ -27,6 +30,33 @@ class RecentFilesViewModel : ViewModel() {
         loadRecentFiles()
     }
 
+    fun updateSearchQuery(query: String) {
+        val current = _uiState.value
+        val filtered = if (query.isBlank()) {
+            current.files
+        } else {
+            current.files.filter { it.name.contains(query, ignoreCase = true) }
+        }
+        _uiState.value = current.copy(
+            searchQuery = query,
+            filteredFiles = filtered
+        )
+    }
+
+    fun toggleSearch() {
+        val current = _uiState.value
+        if (current.isSearchActive) {
+            // Close search → clear query and reset filter
+            _uiState.value = current.copy(
+                isSearchActive = false,
+                searchQuery = "",
+                filteredFiles = current.files
+            )
+        } else {
+            _uiState.value = current.copy(isSearchActive = true)
+        }
+    }
+
     private fun loadRecentFiles() {
         viewModelScope.launch {
             _uiState.value = _uiState.value.copy(isLoading = true)
@@ -34,15 +64,20 @@ class RecentFilesViewModel : ViewModel() {
                 val files = withContext(Dispatchers.IO) {
                     scanAllFiles(Environment.getExternalStorageDirectory())
                 }
+                val query = _uiState.value.searchQuery
+                val filtered = if (query.isBlank()) files
+                else files.filter { it.name.contains(query, ignoreCase = true) }
                 _uiState.value = _uiState.value.copy(
                     files = files,
+                    filteredFiles = filtered,
                     isLoading = false,
                     totalFilesScanned = files.size
                 )
             } catch (e: Exception) {
                 _uiState.value = _uiState.value.copy(
                     isLoading = false,
-                    files = emptyList()
+                    files = emptyList(),
+                    filteredFiles = emptyList()
                 )
             }
         }
@@ -55,8 +90,12 @@ class RecentFilesViewModel : ViewModel() {
                 val files = withContext(Dispatchers.IO) {
                     scanAllFiles(Environment.getExternalStorageDirectory())
                 }
+                val query = _uiState.value.searchQuery
+                val filtered = if (query.isBlank()) files
+                else files.filter { it.name.contains(query, ignoreCase = true) }
                 _uiState.value = _uiState.value.copy(
                     files = files,
+                    filteredFiles = filtered,
                     isRefreshing = false,
                     totalFilesScanned = files.size
                 )

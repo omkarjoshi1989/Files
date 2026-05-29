@@ -17,6 +17,8 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
@@ -25,14 +27,21 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextField
+import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -55,23 +64,60 @@ fun RecentFilesScreen(
         topBar = {
             TopAppBar(
                 title = {
-                    Column {
-                        Text("Recent Files", fontWeight = FontWeight.Bold)
-                        if (!uiState.isLoading) {
-                            Text(
-                                text = "${uiState.totalFilesScanned} files",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
-                            )
+                    if (uiState.isSearchActive) {
+                        val focusRequester = remember { FocusRequester() }
+                        LaunchedEffect(Unit) { focusRequester.requestFocus() }
+                        TextField(
+                            value = uiState.searchQuery,
+                            onValueChange = { viewModel.updateSearchQuery(it) },
+                            placeholder = { Text("Filter by file name…") },
+                            singleLine = true,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .focusRequester(focusRequester),
+                            colors = TextFieldDefaults.colors(
+                                focusedContainerColor = Color.Transparent,
+                                unfocusedContainerColor = Color.Transparent,
+                                focusedIndicatorColor = Color.Transparent,
+                                unfocusedIndicatorColor = Color.Transparent
+                            ),
+                            textStyle = MaterialTheme.typography.bodyLarge
+                        )
+                    } else {
+                        Column {
+                            Text("Recent Files", fontWeight = FontWeight.Bold)
+                            if (!uiState.isLoading) {
+                                Text(
+                                    text = "${uiState.totalFilesScanned} files",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
+                                )
+                            }
                         }
                     }
                 },
                 navigationIcon = {
-                    IconButton(onClick = onNavigateBack) {
+                    IconButton(onClick = {
+                        if (uiState.isSearchActive) viewModel.toggleSearch()
+                        else onNavigateBack()
+                    }) {
                         Icon(
                             Icons.AutoMirrored.Filled.ArrowBack,
                             contentDescription = "Back"
                         )
+                    }
+                },
+                actions = {
+                    if (uiState.isSearchActive) {
+                        if (uiState.searchQuery.isNotEmpty()) {
+                            IconButton(onClick = { viewModel.updateSearchQuery("") }) {
+                                Icon(Icons.Filled.Close, contentDescription = "Clear")
+                            }
+                        }
+                    } else {
+                        IconButton(onClick = { viewModel.toggleSearch() }) {
+                            Icon(Icons.Filled.Search, contentDescription = "Search")
+                        }
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
@@ -100,17 +146,18 @@ fun RecentFilesScreen(
                         )
                     }
                 }
-            } else if (uiState.files.isEmpty()) {
+            } else if (uiState.filteredFiles.isEmpty()) {
                 Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     Text(
-                        text = "No files found",
+                        text = if (uiState.searchQuery.isNotBlank()) "No files matching \"${uiState.searchQuery}\""
+                               else "No files found",
                         style = MaterialTheme.typography.bodyLarge,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
             } else {
                 LazyColumn(modifier = Modifier.fillMaxSize()) {
-                    items(uiState.files, key = { it.absolutePath }) { file ->
+                    items(uiState.filteredFiles, key = { it.absolutePath }) { file ->
                         RecentFileItem(
                             file = file,
                             onClick = { onOpenFile(file) }

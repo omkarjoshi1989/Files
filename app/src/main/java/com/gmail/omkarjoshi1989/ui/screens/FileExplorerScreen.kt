@@ -61,6 +61,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -414,7 +415,30 @@ fun BreadcrumbBar(
     onPathClick: (String) -> Unit
 ) {
     val scrollState = rememberScrollState()
-    val segments = currentPath.split("/").filter { it.isNotEmpty() }
+    val internalStoragePrefix = "/storage/emulated/0"
+    val isUnderInternalStorage = currentPath.startsWith(internalStoragePrefix)
+
+    // Build display segments: collapse /storage/emulated/0 into "Internal Storage"
+    val displaySegments: List<Pair<String, String>> = if (isUnderInternalStorage) {
+        val remainder = currentPath.removePrefix(internalStoragePrefix)
+        val subSegments = remainder.split("/").filter { it.isNotEmpty() }
+        val result = mutableListOf<Pair<String, String>>()
+        result.add("Internal Storage" to internalStoragePrefix)
+        subSegments.forEachIndexed { index, segment ->
+            val path = internalStoragePrefix + "/" + subSegments.subList(0, index + 1).joinToString("/")
+            result.add(segment to path)
+        }
+        result
+    } else {
+        val segments = currentPath.split("/").filter { it.isNotEmpty() }
+        val result = mutableListOf<Pair<String, String>>()
+        result.add("/" to "/")
+        segments.forEachIndexed { index, segment ->
+            val path = "/" + segments.subList(0, index + 1).joinToString("/")
+            result.add(segment to path)
+        }
+        result
+    }
 
     // Auto-scroll to the end when path changes
     LaunchedEffect(currentPath) {
@@ -428,19 +452,15 @@ fun BreadcrumbBar(
             .padding(horizontal = 12.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        // Root
-        TextButton(onClick = { onPathClick("/") }) {
-            Text("/", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
-        }
-
-        segments.forEachIndexed { index, segment ->
-            Text("›", color = MaterialTheme.colorScheme.onSurfaceVariant)
-            val pathUpToHere = "/" + segments.subList(0, index + 1).joinToString("/")
-            TextButton(onClick = { onPathClick(pathUpToHere) }) {
+        displaySegments.forEachIndexed { index, (label, path) ->
+            if (index > 0) {
+                Text("›", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            TextButton(onClick = { onPathClick(path) }) {
                 Text(
-                    text = segment,
+                    text = label,
                     style = MaterialTheme.typography.bodyMedium,
-                    fontWeight = if (index == segments.lastIndex) FontWeight.Bold else FontWeight.Normal,
+                    fontWeight = if (index == displaySegments.lastIndex) FontWeight.Bold else FontWeight.Normal,
                     maxLines = 1
                 )
             }
@@ -456,9 +476,11 @@ fun FileListItem(
     onClick: () -> Unit,
     onLongClick: () -> Unit
 ) {
+    val isHidden = file.name.startsWith(".")
     Column(
         modifier = Modifier
             .fillMaxWidth()
+            .alpha(if (isHidden) 0.5f else 1f)
             .combinedClickable(
                 onClick = onClick,
                 onLongClick = onLongClick

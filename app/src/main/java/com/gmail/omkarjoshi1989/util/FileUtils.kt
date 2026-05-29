@@ -9,6 +9,32 @@ import java.io.File
 
 object FileUtils {
 
+    private val imageExtensions = setOf(
+        "jpg", "jpeg", "png", "gif", "bmp", "webp", "heic", "heif", "svg", "ico"
+    )
+    private val videoExtensions = setOf(
+        "mp4", "mkv", "avi", "mov", "wmv", "flv", "webm", "3gp", "m4v", "ts"
+    )
+    private val audioExtensions = setOf(
+        "mp3", "wav", "flac", "aac", "ogg", "m4a", "wma", "opus", "amr"
+    )
+
+    fun isMediaFile(file: File): Boolean {
+        val ext = file.extension.lowercase()
+        return ext in imageExtensions || ext in videoExtensions || ext in audioExtensions
+    }
+
+    fun isImageFile(file: File): Boolean = file.extension.lowercase() in imageExtensions
+    fun isVideoFile(file: File): Boolean = file.extension.lowercase() in videoExtensions
+    fun isAudioFile(file: File): Boolean = file.extension.lowercase() in audioExtensions
+
+    fun getMediaFilesInFolder(folder: File): List<File> {
+        return folder.listFiles()
+            ?.filter { it.isFile && isMediaFile(it) }
+            ?.sortedBy { it.name.lowercase() }
+            ?: emptyList()
+    }
+
     fun formatFileSize(size: Long): String {
         return when {
             size < 1024 -> "$size B"

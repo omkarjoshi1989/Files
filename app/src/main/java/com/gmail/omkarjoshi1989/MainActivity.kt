@@ -34,6 +34,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.gmail.omkarjoshi1989.ui.screens.FileExplorerScreen
 import com.gmail.omkarjoshi1989.ui.screens.HomeDestination
 import com.gmail.omkarjoshi1989.ui.screens.HomeScreen
+import com.gmail.omkarjoshi1989.ui.screens.PinLockScreen
 import com.gmail.omkarjoshi1989.ui.screens.RecentFilesScreen
 import com.gmail.omkarjoshi1989.ui.theme.FilesTheme
 import com.gmail.omkarjoshi1989.util.FileUtils
@@ -47,6 +48,7 @@ enum class Screen {
 class MainActivity : ComponentActivity() {
 
     private var hasStoragePermission by mutableStateOf(false)
+    private var isAuthenticated by mutableStateOf(false)
     private var currentScreen by mutableStateOf(Screen.HOME)
 
     private val manageStorageLauncher = registerForActivityResult(
@@ -68,7 +70,12 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             FilesTheme {
-                if (hasStoragePermission) {
+                if (!isAuthenticated) {
+                    BackHandler { finish() }
+                    PinLockScreen(
+                        onPinCorrect = { isAuthenticated = true }
+                    )
+                } else if (hasStoragePermission) {
                     when (currentScreen) {
                         Screen.HOME -> {
                             BackHandler { finish() }
@@ -155,11 +162,20 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun openFile(file: java.io.File) {
-        try {
-            val intent = FileUtils.getOpenFileIntent(this, file)
+        if (FileUtils.isMediaFile(file) && file.parentFile != null) {
+            // Open in built-in media viewer with swipeable pager
+            val intent = Intent(this, MediaViewerActivity::class.java).apply {
+                putExtra(MediaViewerActivity.EXTRA_FOLDER_PATH, file.parentFile!!.absolutePath)
+                putExtra(MediaViewerActivity.EXTRA_FILE_PATH, file.absolutePath)
+            }
             startActivity(intent)
-        } catch (e: Exception) {
-            Toast.makeText(this, "No app found to open this file", Toast.LENGTH_SHORT).show()
+        } else {
+            try {
+                val intent = FileUtils.getOpenFileIntent(this, file)
+                startActivity(intent)
+            } catch (e: Exception) {
+                Toast.makeText(this, "No app found to open this file", Toast.LENGTH_SHORT).show()
+            }
         }
     }
 }
