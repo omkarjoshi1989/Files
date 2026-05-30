@@ -50,34 +50,35 @@
 
 ## Music Player
 
-| #  | Feature                                                                 | Status  | Notes |
-|----|-------------------------------------------------------------------------|---------|-------|
-| 1  | Music screen (group by folder)                                          | Pending |       |
-| 2  | Music play in background even after app is closed                       | Pending |       |
-| 3  | Music play screen: add controls like repeat song, shuffle, and seek bar | Pending |       |
-| 4  | Music play screen: show song title, artist name, and album name         | Pending |       |
-| 5  | Music play screen: add play/pause, next, and previous buttons           | Pending |       |
-| 6  | Music play notification with playback controls                          | Pending |       |
-| 7  | Create and manage playlists                                             | Pending |       |
-| 8  | Audio visualizer on playback screen                                     | Pending |       |
-| 9  | Sleep timer for music playback                                          | Pending |       |
-| 10 | Equalizer and bass boost settings                                       | Pending |       |
-| 11 | Fetch and display lyrics (LRC files or embedded)                        | Pending |       |
-| 12 | Shortcut to launch music player from TILES screen                       | Pending |       |
+| #  | Feature                                                                                                   | Status  | Notes                                                                       |
+|----|-----------------------------------------------------------------------------------------------------------|---------|-----------------------------------------------------------------------------|
+| 1  | Music screen (group by folder)                                                                            | Pending |                                                                             |
+| 2  | Music play in background even after app is closed                                                         | ✅ Done  | Service keeps playing on dispose; state hoisting ensures UI syncs on return |
+| 3  | Music play screen: add controls like repeat song, repeat entire folder audio files, shuffle, and seek bar | Pending |                                                                             |
+| 4  | Music play screen: show song title, artist name, and album name                                           | Pending |                                                                             |
+| 5  | Music play screen: add play/pause, next, and previous buttons                                             | Pending |                                                                             |
+| 6  | Music play notification with playback controls                                                            | ✅ Done  | Media3 MediaSessionService with auto notification; play/pause/seek controls |
+| 7  | Create and manage playlists                                                                               | Pending |                                                                             |
+| 8  | Audio visualizer on playback screen                                                                       | Pending |                                                                             |
+| 9  | Sleep timer for music playback                                                                            | Pending |                                                                             |
+| 10 | Equalizer and bass boost settings                                                                         | Pending |                                                                             |
+| 11 | Fetch and display lyrics (LRC files or embedded)                                                          | Pending |                                                                             |
+| 12 | Shortcut to launch music player from TILES screen                                                         | Pending |                                                                             |
 
 ## Video Player (Existing video player controls are not as good as they are supposed to be)
 
-| #  | Feature                                                 | Status  | Notes |
-|----|---------------------------------------------------------|---------|-------|
-| 1  | Videos screen (group by folder)                         | Pending |       |
-| 2  | Gesture controls for brightness and volume              | Pending |       |
-| 3  | Double tap to seek forward/backward                     | Pending |       |
-| 4  | Aspect ratio toggle (Fit, Fill, Stretch, 16:9, 4:3)     | Pending |       |
-| 5  | Subtitle support (SRT, VTT) and audio track selection   | Pending |       |
-| 6  | Playback speed control (0.5x to 2.0x)                   | Pending |       |
-| 7  | Picture-in-Picture (PiP) mode                           | Pending |       |
-| 8  | Screen lock to prevent accidental touches               | Pending |       |
-| 9  | Background play (audio only) toggle                     | Pending |       |
+| #  | Feature                                                                  | Status  | Notes |
+|----|--------------------------------------------------------------------------|---------|-------|
+| 1  | Videos screen (group by folder)                                          | Pending |       |
+| 2  | Gesture controls for brightness and volume                               | Pending |       |
+| 3  | Double tap to seek forward/backward                                      | Pending |       |
+| 4  | Aspect ratio toggle (Fit, Fill, Stretch, 16:9, 4:3)                      | Pending |       |
+| 5  | Subtitle support (SRT, VTT) and audio track selection                    | Pending |       |
+| 6  | Playback speed control (0.5x to 2.0x)                                    | Pending |       |
+| 7  | Picture-in-Picture (PiP) mode                                            | Pending |       |
+| 8  | Screen lock to prevent accidental touches                                | Pending |       |
+| 9  | Background play (audio only) toggle                                      | Pending |       |
+| 10 | Enable/disable left/right swiping between all video files in that folder | Pending |       | 
 
 ## Documents
 
@@ -102,26 +103,29 @@
 
 ## Security & Authentication
 
-| #  | Feature                                                                                                 | Status  | Notes |
-|----|---------------------------------------------------------------------------------------------------------|---------|-------|
-| 1  | PIN lock screen with custom in-app numeric keypad                                                       | ✅ Done  |       |
-| 2  | Add 'Ask for master password' flag to bypass password entering activity when master password is not set | Pending |       |
-| 3  | Fingerprint / Biometric lock for private folders                                                        | Pending |       |
+| # | Feature                                                                                                 | Status  | Notes                                                  |
+|---|---------------------------------------------------------------------------------------------------------|---------|--------------------------------------------------------|
+| 1 | PIN lock screen with custom in-app numeric keypad                                                       | ✅ Done  |                                                        |
+| 2 | Add 'Ask for master password' flag to bypass password entering activity when master password is not set | ✅ Done  | Integrated with SettingsManager and MainActivity check |
+| 3 | Fingerprint / Biometric lock for private folders                                                        | Pending |                                                        |
 
 ## Settings & System
 
-| #  | Feature                                           | Status  | Notes                            |
-|----|---------------------------------------------------|---------|----------------------------------|
-| 1  | Home screen with category cards                   | ✅ Done  | Replace into settings page later |
-| 2  | Dark/Light theme toggle                           | Pending | Currently follows system theme   |
-| 3  | Settings screen                                   | Pending |                                  |
-| 4  | Camera button directly from app                   | Pending |                                  |
-| 5  | Cloud storage integration (Google Drive, Dropbox) | Pending |                                  |
+| # | Feature                                              | Status  | Notes                                                |
+|---|------------------------------------------------------|---------|------------------------------------------------------|
+| 1 | Home screen with category cards                      | ✅ Done  | Replace into settings page later                     |
+| 2 | Dark/Light theme toggle                              | Pending | Currently follows system theme                       |
+| 3 | Settings screen                                      | ✅ Done  | Accessible from Home; manages master password toggle |
+| 4 | Camera button directly from app                      | Pending |                                                      |
+| 5 | Cloud storage integration (Google Drive, Dropbox)    | Pending |                                                      |
+| 6 | Video background play flag/toggle in settings screen | Pending |                                                      |
 
 ## Issues observed
 1. On any screen if screen is rotated, then app is launching password entering screen. 
 This is because of the fact that on rotation activity is recreated and in onCreate() method we are
 checking for password and launching password entering screen if password is set. To fix this issue, 
+we can check `savedInstanceState == null` in `onCreate()` to ensure the password check only triggers on a fresh launch.
 we can add a flag to check if the activity is being recreated due to rotation and skip the password 
 check in that case.
-2. 
+2. Music playback and video playback on different streams it seems. Due to this issue
+3. Music player skipping tracks. There is some issue like file name displayed for music play is not the audio file which is playing 

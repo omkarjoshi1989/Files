@@ -36,19 +36,22 @@ import com.gmail.omkarjoshi1989.ui.screens.HomeDestination
 import com.gmail.omkarjoshi1989.ui.screens.HomeScreen
 import com.gmail.omkarjoshi1989.ui.screens.PinLockScreen
 import com.gmail.omkarjoshi1989.ui.screens.RecentFilesScreen
+import com.gmail.omkarjoshi1989.ui.screens.SettingsScreen
 import com.gmail.omkarjoshi1989.ui.theme.FilesTheme
 import com.gmail.omkarjoshi1989.util.FileUtils
+import com.gmail.omkarjoshi1989.util.SettingsManager
 import com.gmail.omkarjoshi1989.viewmodel.FileExplorerViewModel
 import com.gmail.omkarjoshi1989.viewmodel.RecentFilesViewModel
 
 enum class Screen {
-    HOME, FILE_EXPLORER, RECENT_FILES
+    HOME, FILE_EXPLORER, RECENT_FILES, SETTINGS
 }
 
 class MainActivity : ComponentActivity() {
 
     private var hasStoragePermission by mutableStateOf(false)
     private var isAuthenticated by mutableStateOf(false)
+    private var masterPasswordEnabled by mutableStateOf(true)
     private var currentScreen by mutableStateOf(Screen.HOME)
 
     private val manageStorageLauncher = registerForActivityResult(
@@ -67,6 +70,10 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         checkPermission()
+        masterPasswordEnabled = SettingsManager.isMasterPasswordEnabled(this)
+        if (!masterPasswordEnabled) {
+            isAuthenticated = true
+        }
 
         setContent {
             FilesTheme {
@@ -84,6 +91,7 @@ class MainActivity : ComponentActivity() {
                                     when (destination) {
                                         HomeDestination.FILE_EXPLORER -> currentScreen = Screen.FILE_EXPLORER
                                         HomeDestination.RECENT_FILES -> currentScreen = Screen.RECENT_FILES
+                                        HomeDestination.SETTINGS -> currentScreen = Screen.SETTINGS
                                         else -> {
                                             Toast.makeText(this, "${destination.label} - Coming soon!", Toast.LENGTH_SHORT).show()
                                         }
@@ -115,6 +123,16 @@ class MainActivity : ComponentActivity() {
                                 viewModel = recentViewModel,
                                 onOpenFile = { file -> openFile(file) },
                                 onNavigateBack = { currentScreen = Screen.HOME }
+                            )
+                        }
+                        Screen.SETTINGS -> {
+                            BackHandler { currentScreen = Screen.HOME }
+                            SettingsScreen(
+                                onNavigateBack = {
+                                    // Re-read setting when leaving settings
+                                    masterPasswordEnabled = SettingsManager.isMasterPasswordEnabled(this@MainActivity)
+                                    currentScreen = Screen.HOME
+                                }
                             )
                         }
                     }

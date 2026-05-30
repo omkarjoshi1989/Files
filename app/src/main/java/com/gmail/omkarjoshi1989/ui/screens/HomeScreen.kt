@@ -19,6 +19,7 @@ import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Apps
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.VideoLibrary
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -43,7 +44,8 @@ enum class HomeDestination(val label: String, val icon: ImageVector) {
     MUSIC("Music", Icons.Filled.MusicNote),
     VIDEOS("Videos", Icons.Filled.VideoLibrary),
     DOCUMENTS("Documents", Icons.Filled.Description),
-    APPLICATIONS("Applications", Icons.Filled.Apps)
+    APPLICATIONS("Applications", Icons.Filled.Apps),
+    SETTINGS("Settings", Icons.Filled.Settings)
 }
 
 @OptIn(ExperimentalMaterial3Api::class)

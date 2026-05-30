@@ -35,6 +35,13 @@ object FileUtils {
             ?: emptyList()
     }
 
+    fun getAudioFilesInFolder(folder: File): List<File> {
+        return folder.listFiles()
+            ?.filter { it.isFile && isAudioFile(it) }
+            ?.sortedBy { it.name.lowercase() }
+            ?: emptyList()
+    }
+
     fun formatFileSize(size: Long): String {
         return when {
             size < 1024 -> "$size B"

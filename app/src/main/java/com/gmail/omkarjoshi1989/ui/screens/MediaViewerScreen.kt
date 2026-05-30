@@ -42,6 +42,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -64,13 +65,18 @@ import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.media3.common.MediaItem
+import androidx.media3.common.MediaMetadata
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.session.MediaController
+import androidx.media3.session.SessionToken
 import androidx.media3.ui.PlayerView
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
+import com.gmail.omkarjoshi1989.service.MusicPlaybackService
 import com.gmail.omkarjoshi1989.util.FileUtils
+import com.google.common.util.concurrent.MoreExecutors
 import kotlinx.coroutines.delay
 import java.io.File
 
@@ -81,22 +87,199 @@ fun MediaViewerScreen(
     initialIndex: Int,
     onClose: () -> Unit
 ) {
+    val context = LocalContext.current
     val pagerState = rememberPagerState(
         initialPage = initialIndex,
         pageCount = { mediaFiles.size }
     )
 
-    val currentFile = mediaFiles.getOrNull(pagerState.currentPage)
+    val currentFile = mediaFiles.getOrNull(pagerState.settledPage)
     var isImmersive by remember { mutableStateOf(false) }
 
-    // Reset immersive mode on page change
-    LaunchedEffect(Unit) {
-        snapshotFlow { pagerState.currentPage }.collect {
-            isImmersive = false
+    // ── Audio playlist mapping ──────────────────────────────────────────
+    // audioPageIndices: list of pager indices that are audio files (in pager order)
+    // pageToPlaylistIndex: pager page index → playlist position
+    // playlistToPageIndex: playlist position → pager page index
+    val audioPageIndices = remember(mediaFiles) {
+        mediaFiles.mapIndexedNotNull { index, file ->
+            if (FileUtils.isAudioFile(file)) index else null
+        }
+    }
+    val pageToPlaylistIndex = remember(audioPageIndices) {
+        audioPageIndices.withIndex().associate { (playlistIdx, pageIdx) -> pageIdx to playlistIdx }
+    }
+    val playlistToPageIndex = remember(audioPageIndices) {
+        audioPageIndices.withIndex().associate { (playlistIdx, pageIdx) -> playlistIdx to pageIdx }
+    }
+    val hasAudioFiles = audioPageIndices.isNotEmpty()
+
+    // ── Shared music controller state (hoisted) ─────────────────────────
+    var musicController by remember { mutableStateOf<MediaController?>(null) }
+    var isAudioPlaying by remember { mutableStateOf(false) }
+    var audioPosition by remember { mutableLongStateOf(0L) }
+    var audioDuration by remember { mutableLongStateOf(0L) }
+    // Tracks the player's current media-item index inside the playlist.
+    // -1 means "no audio track active yet".
+    var playerTrackIndex by remember { mutableIntStateOf(-1) }
+    // Whether we have already loaded our playlist into the service player.
+    var playlistLoaded by remember { mutableStateOf(false) }
+
+    // Build MediaItem list once (stable across recompositions)
+    val audioMediaItems = remember(mediaFiles, audioPageIndices) {
+        audioPageIndices.map { pageIdx ->
+            val file = mediaFiles[pageIdx]
+            MediaItem.Builder()
+                .setUri(android.net.Uri.fromFile(file))
+                .setMediaMetadata(
+                    MediaMetadata.Builder()
+                        .setTitle(file.nameWithoutExtension)
+                        .setArtist("Files App")
+                        .build()
+                )
+                .build()
         }
     }
 
-    // Control system bars
+    // ── Connect to MusicPlaybackService once at screen level ────────────
+    if (hasAudioFiles) {
+        DisposableEffect(Unit) {
+            val sessionToken = SessionToken(
+                context,
+                android.content.ComponentName(context, MusicPlaybackService::class.java)
+            )
+            val controllerFuture = MediaController.Builder(context, sessionToken).buildAsync()
+
+            controllerFuture.addListener(
+                {
+                    val mc = controllerFuture.get()
+                    musicController = mc
+
+                    // Check if the service already has the exact same playlist loaded
+                    val samePlaylist = mc.mediaItemCount == audioMediaItems.size &&
+                            audioMediaItems.indices.all { i ->
+                                mc.getMediaItemAt(i).localConfiguration?.uri ==
+                                        audioMediaItems[i].localConfiguration?.uri
+                            }
+
+                    if (samePlaylist) {
+                        // Playlist already loaded (e.g. returning from notification) — sync UI
+                        playlistLoaded = true
+                        isAudioPlaying = mc.isPlaying
+                        if (mc.duration > 0) audioDuration = mc.duration
+                        audioPosition = mc.currentPosition
+                        playerTrackIndex = mc.currentMediaItemIndex
+                    }
+                    // If NOT same playlist, we defer loading until the user actually
+                    // lands on an audio page (see snapshotFlow below).  This avoids
+                    // overriding a playing track from a different folder when the user
+                    // only opened an image.
+
+                    // Listen for state changes from the player / notification controls
+                    mc.addListener(object : Player.Listener {
+                        override fun onIsPlayingChanged(playing: Boolean) {
+                            isAudioPlaying = playing
+                        }
+
+                        override fun onPlaybackStateChanged(playbackState: Int) {
+                            if (playbackState == Player.STATE_READY) {
+                                audioDuration = mc.duration
+                            }
+                        }
+
+                        override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
+                            playerTrackIndex = mc.currentMediaItemIndex
+                            audioDuration = if (mc.duration > 0) mc.duration else 0L
+                            audioPosition = mc.currentPosition
+                        }
+                    })
+                },
+                MoreExecutors.directExecutor()
+            )
+
+            onDispose {
+                MediaController.releaseFuture(controllerFuture)
+                musicController = null
+            }
+        }
+    }
+
+    // ── Helper: load/seek the audio playlist and auto-play ─────────────
+    // Extracted so both the snapshotFlow and the controller-ready effect
+    // can call the same logic without duplication.
+    fun syncAudioToPage(mc: MediaController, page: Int) {
+        val playlistIdx = pageToPlaylistIndex[page] ?: return
+        if (!playlistLoaded) {
+            // First time landing on audio — load the full playlist at the correct track
+            mc.setMediaItems(audioMediaItems, playlistIdx, 0L)
+            mc.prepare()
+            mc.play()                      // ← auto-play
+            playlistLoaded = true
+            playerTrackIndex = playlistIdx
+        } else if (mc.currentMediaItemIndex != playlistIdx) {
+            mc.seekToDefaultPosition(playlistIdx)
+            mc.play()                      // ← auto-play on swipe
+            playerTrackIndex = playlistIdx
+        } else if (!mc.isPlaying) {
+            // Same track but paused (e.g. swiped away to image then back)
+            mc.play()
+        }
+        // Sync UI immediately
+        isAudioPlaying = mc.isPlaying
+        audioDuration = if (mc.duration > 0) mc.duration else 0L
+        audioPosition = mc.currentPosition
+    }
+
+    // ── Pager page settled → seek player or pause ────────────────────────
+    // Uses settledPage so playback only starts after the swipe animation
+    // finishes, preventing audio blips on intermediate pages.
+    LaunchedEffect(Unit) {
+        snapshotFlow { pagerState.settledPage }.collect { page ->
+            isImmersive = false
+
+            val playlistIdx = pageToPlaylistIndex[page]
+            if (playlistIdx != null) {
+                // Landed on an audio page
+                musicController?.let { mc -> syncAudioToPage(mc, page) }
+            } else {
+                // Non-audio page — pause audio if playing
+                musicController?.let { mc ->
+                    if (mc.isPlaying) mc.pause()
+                }
+            }
+        }
+    }
+
+    // ── Controller connected → catch up with current page ────────────────
+    // Fixes the race where the snapshotFlow already fired before the
+    // MediaController was ready (musicController was null at that point).
+    LaunchedEffect(musicController) {
+        val mc = musicController ?: return@LaunchedEffect
+        val page = pagerState.settledPage
+        val playlistIdx = pageToPlaylistIndex[page]
+        if (playlistIdx != null) {
+            syncAudioToPage(mc, page)
+        }
+    }
+
+    // ── Player track changed externally (notification skip) → scroll pager ──
+    LaunchedEffect(playerTrackIndex) {
+        if (playerTrackIndex >= 0) {
+            val targetPage = playlistToPageIndex[playerTrackIndex]
+            if (targetPage != null && targetPage != pagerState.settledPage) {
+                pagerState.animateScrollToPage(targetPage)
+            }
+        }
+    }
+
+    // ── Periodic position update while audio is playing ─────────────────
+    LaunchedEffect(isAudioPlaying) {
+        while (isAudioPlaying) {
+            musicController?.let { audioPosition = it.currentPosition }
+            delay(500)
+        }
+    }
+
+    // ── Control system bars ─────────────────────────────────────────────
     val view = LocalView.current
     val activity = (view.context as? android.app.Activity)
 
@@ -123,6 +306,7 @@ fun MediaViewerScreen(
         }
     }
 
+    // ── UI ──────────────────────────────────────────────────────────────
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -131,10 +315,11 @@ fun MediaViewerScreen(
         HorizontalPager(
             state = pagerState,
             modifier = Modifier.fillMaxSize(),
+            beyondViewportPageCount = 0,   // prevent pre-rendering adjacent pages
             key = { mediaFiles[it].absolutePath }
         ) { page ->
             val file = mediaFiles[page]
-            val isCurrentPage = pagerState.currentPage == page
+            val isCurrentPage = pagerState.settledPage == page
 
             when {
                 FileUtils.isImageFile(file) -> ImagePage(
@@ -148,7 +333,10 @@ fun MediaViewerScreen(
                 )
                 FileUtils.isAudioFile(file) -> AudioPage(
                     file = file,
-                    isActive = isCurrentPage,
+                    controller = musicController,
+                    isPlaying = isAudioPlaying && isCurrentPage,
+                    currentPosition = if (isCurrentPage) audioPosition else 0L,
+                    duration = if (isCurrentPage) audioDuration else 0L,
                     onTap = { isImmersive = !isImmersive }
                 )
             }
@@ -171,7 +359,7 @@ fun MediaViewerScreen(
                             fontWeight = FontWeight.Bold
                         )
                         Text(
-                            text = "${pagerState.currentPage + 1} / ${mediaFiles.size}",
+                            text = "${pagerState.settledPage + 1} / ${mediaFiles.size}",
                             style = MaterialTheme.typography.bodySmall,
                             color = Color.White.copy(alpha = 0.7f)
                         )
@@ -279,55 +467,19 @@ private fun VideoPage(file: File, isActive: Boolean, onImmersiveChange: (Boolean
     }
 }
 
+/**
+ * Pure UI component — does NOT connect to the service itself.
+ * All playback state is hoisted to [MediaViewerScreen].
+ */
 @Composable
-private fun AudioPage(file: File, isActive: Boolean, onTap: () -> Unit) {
-    val context = LocalContext.current
-
-    val exoPlayer = remember(file.absolutePath) {
-        ExoPlayer.Builder(context).build().apply {
-            setMediaItem(MediaItem.fromUri(android.net.Uri.fromFile(file)))
-            prepare()
-        }
-    }
-
-    var isPlaying by remember { mutableStateOf(false) }
-    var currentPosition by remember { mutableLongStateOf(0L) }
-    var duration by remember { mutableLongStateOf(0L) }
-
-    // Listen for player state changes
-    DisposableEffect(file.absolutePath) {
-        val listener = object : Player.Listener {
-            override fun onIsPlayingChanged(playing: Boolean) {
-                isPlaying = playing
-            }
-            override fun onPlaybackStateChanged(playbackState: Int) {
-                if (playbackState == Player.STATE_READY) {
-                    duration = exoPlayer.duration
-                }
-            }
-        }
-        exoPlayer.addListener(listener)
-        onDispose {
-            exoPlayer.removeListener(listener)
-            exoPlayer.release()
-        }
-    }
-
-    // Pause when swiped away
-    LaunchedEffect(isActive) {
-        if (!isActive) {
-            exoPlayer.playWhenReady = false
-        }
-    }
-
-    // Update position periodically
-    LaunchedEffect(isPlaying) {
-        while (isPlaying) {
-            currentPosition = exoPlayer.currentPosition
-            delay(500)
-        }
-    }
-
+private fun AudioPage(
+    file: File,
+    controller: MediaController?,
+    isPlaying: Boolean,
+    currentPosition: Long,
+    duration: Long,
+    onTap: () -> Unit
+) {
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -419,10 +571,12 @@ private fun AudioPage(file: File, isActive: Boolean, onTap: () -> Unit) {
             // Play/Pause button
             IconButton(
                 onClick = {
-                    if (exoPlayer.isPlaying) {
-                        exoPlayer.pause()
-                    } else {
-                        exoPlayer.playWhenReady = true
+                    controller?.let { mc ->
+                        if (mc.isPlaying) {
+                            mc.pause()
+                        } else {
+                            mc.playWhenReady = true
+                        }
                     }
                 },
                 modifier = Modifier
