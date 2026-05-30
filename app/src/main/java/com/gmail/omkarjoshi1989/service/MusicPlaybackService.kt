@@ -55,7 +55,6 @@ class MusicPlaybackService : MediaSessionService() {
                 val intent = Intent(this@MusicPlaybackService, MediaViewerActivity::class.java).apply {
                     putExtra(MediaViewerActivity.EXTRA_FOLDER_PATH, folderPath)
                     putExtra(MediaViewerActivity.EXTRA_FILE_PATH, filePath)
-                    putExtra(MediaViewerActivity.EXTRA_AUDIO_ONLY, true)
                     flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
                 }
 

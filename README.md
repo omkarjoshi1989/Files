@@ -32,9 +32,10 @@
 | #  | Feature                                                                                                | Status  | Notes                                                                                          |
 |----|--------------------------------------------------------------------------------------------------------|---------|------------------------------------------------------------------------------------------------|
 | 1  | Media Viewer: swipeable image/video/audio playback for all media in a folder                           | ✅ Done  | HorizontalPager with ExoPlayer; images display, videos play with controls, audio plays with UI |
-| 2  | PDF opens along with images, videos, audio while swiping left and right in existing flow               | Pending |                                                                                                |
-| 3  | Sort mode (name, date, size, type) in media viewer                                                     | Pending |                                                                                                |
-| 4  | Toggle immersive view activity must allow users to toggle complete immersive view if touched on screen | ✅ Done  | Tap toggles top bar + system bars; animated slide/fade; restores on exit                       |
+| 2  | Type-isolated swiping: images+videos grouped together, audio separate; loop swiping for visual media   | ✅ Done  | Auto-detects file type; images & videos swipe together with infinite loop; audio stays isolated |
+| 3  | PDF opens along with images, videos, audio while swiping left and right in existing flow               | Pending | Deferred to future — requires in-app PDF viewer implementation first (see Documents #2) |
+| 4  | Sort mode (name, date, size, type) in media viewer                                                     | Pending |                                                                                                |
+| 5  | Toggle immersive view activity must allow users to toggle complete immersive view if touched on screen | ✅ Done  | Tap toggles top bar + system bars; animated slide/fade; restores on exit                       |
 
 ## Photos / Gallery
 

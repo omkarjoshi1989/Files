@@ -24,12 +24,12 @@ class MediaViewerActivity : ComponentActivity() {
     companion object {
         const val EXTRA_FOLDER_PATH = "folder_path"
         const val EXTRA_FILE_PATH = "file_path"
-        const val EXTRA_AUDIO_ONLY = "audio_only"
         private const val NOTIFICATION_PERMISSION_REQUEST_CODE = 100
     }
 
     private var mediaFiles by mutableStateOf<List<File>>(emptyList())
     private var initialIndex by mutableIntStateOf(0)
+    private var loopEnabled by mutableStateOf(false)
     // Incremented on every new intent so the Composable tree reinitialises
     // (rememberPagerState picks up the new initialIndex).
     private var screenKey by mutableIntStateOf(0)
@@ -57,6 +57,7 @@ class MediaViewerActivity : ComponentActivity() {
                     MediaViewerScreen(
                         mediaFiles = mediaFiles,
                         initialIndex = initialIndex,
+                        loopEnabled = loopEnabled,
                         onClose = { finish() }
                     )
                 }
@@ -67,19 +68,19 @@ class MediaViewerActivity : ComponentActivity() {
     private fun loadFromIntent(intent: android.content.Intent?): Boolean {
         val folderPath = intent?.getStringExtra(EXTRA_FOLDER_PATH) ?: return false
         val filePath = intent.getStringExtra(EXTRA_FILE_PATH) ?: return false
-        val audioOnly = intent.getBooleanExtra(EXTRA_AUDIO_ONLY, false)
 
         val folder = File(folderPath)
-        val files = if (audioOnly) {
-            FileUtils.getAudioFilesInFolder(folder)
-        } else {
-            FileUtils.getMediaFilesInFolder(folder)
-        }
+        val targetFile = File(filePath)
+
+        // Auto-detect file type and only load files of the same type
+        val files = FileUtils.getFilesOfSameType(folder, targetFile)
 
         if (files.isEmpty()) return false
 
         mediaFiles = files
         initialIndex = files.indexOfFirst { it.absolutePath == filePath }.coerceAtLeast(0)
+        // Enable loop swiping for all media types (visual media and audio)
+        loopEnabled = true
         return true
     }
 
@@ -99,4 +100,3 @@ class MediaViewerActivity : ComponentActivity() {
         }
     }
 }
-

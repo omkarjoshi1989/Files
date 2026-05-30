@@ -28,9 +28,25 @@ object FileUtils {
     fun isVideoFile(file: File): Boolean = file.extension.lowercase() in videoExtensions
     fun isAudioFile(file: File): Boolean = file.extension.lowercase() in audioExtensions
 
+    /** Returns true if the file is an image or video (visual media). */
+    fun isVisualMediaFile(file: File): Boolean {
+        val ext = file.extension.lowercase()
+        return ext in imageExtensions || ext in videoExtensions
+    }
+
     fun getMediaFilesInFolder(folder: File): List<File> {
         return folder.listFiles()
             ?.filter { it.isFile && isMediaFile(it) }
+            ?.sortedBy { it.name.lowercase() }
+            ?: emptyList()
+    }
+
+    /**
+     * Returns image + video files combined (visual media) from the folder.
+     */
+    fun getVisualMediaFilesInFolder(folder: File): List<File> {
+        return folder.listFiles()
+            ?.filter { it.isFile && isVisualMediaFile(it) }
             ?.sortedBy { it.name.lowercase() }
             ?: emptyList()
     }
@@ -40,6 +56,20 @@ object FileUtils {
             ?.filter { it.isFile && isAudioFile(it) }
             ?.sortedBy { it.name.lowercase() }
             ?: emptyList()
+    }
+
+    /**
+     * Returns files from [folder] that belong to the same media group as [referenceFile].
+     * Images and videos are grouped together as "visual media".
+     * Audio files are grouped separately.
+     * Falls back to all media files if the reference file type is unknown.
+     */
+    fun getFilesOfSameType(folder: File, referenceFile: File): List<File> {
+        return when {
+            isVisualMediaFile(referenceFile) -> getVisualMediaFilesInFolder(folder)
+            isAudioFile(referenceFile) -> getAudioFilesInFolder(folder)
+            else -> getMediaFilesInFolder(folder)
+        }
     }
 
     fun formatFileSize(size: Long): String {
@@ -71,4 +101,3 @@ object FileUtils {
         return Intent.createChooser(intent, "Open with")
     }
 }
-

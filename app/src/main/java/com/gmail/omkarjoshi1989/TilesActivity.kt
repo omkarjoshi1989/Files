@@ -1,10 +1,12 @@
 package com.gmail.omkarjoshi1989
 
 import android.content.Intent
+import android.content.ActivityNotFoundException
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.Environment
+import android.os.Process
 import android.provider.Settings
 import android.widget.Toast
 import androidx.activity.ComponentActivity
@@ -160,14 +162,33 @@ class TilesActivity : ComponentActivity() {
 
     private fun requestStoragePermission() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            try {
-                val intent = Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION).apply {
-                    data = Uri.parse("package:$packageName")
+            val appPackage = applicationContext.packageName
+            val packagesForUid = packageManager.getPackagesForUid(Process.myUid()).orEmpty()
+            val packageBelongsToUid = packagesForUid.contains(appPackage)
+
+            val packageSpecificIntent = Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION).apply {
+                data = Uri.fromParts("package", appPackage, null)
+            }
+            val fallbackIntent = Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION)
+
+            val intentToLaunch = when {
+                packageBelongsToUid && packageSpecificIntent.resolveActivity(packageManager) != null -> packageSpecificIntent
+                fallbackIntent.resolveActivity(packageManager) != null -> fallbackIntent
+                else -> Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                    data = Uri.fromParts("package", appPackage, null)
                 }
-                manageStorageLauncher.launch(intent)
-            } catch (e: Exception) {
-                val intent = Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION)
-                manageStorageLauncher.launch(intent)
+            }
+
+            try {
+                manageStorageLauncher.launch(intentToLaunch)
+            } catch (_: SecurityException) {
+                manageStorageLauncher.launch(fallbackIntent)
+            } catch (_: ActivityNotFoundException) {
+                manageStorageLauncher.launch(
+                    Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                        data = Uri.fromParts("package", appPackage, null)
+                    }
+                )
             }
         } else {
             legacyPermissionLauncher.launch(

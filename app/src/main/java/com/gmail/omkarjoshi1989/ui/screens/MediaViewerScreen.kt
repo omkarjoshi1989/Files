@@ -69,6 +69,7 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
@@ -86,15 +87,32 @@ import java.io.File
 fun MediaViewerScreen(
     mediaFiles: List<File>,
     initialIndex: Int,
+    loopEnabled: Boolean = false,
     onClose: () -> Unit
 ) {
     val context = LocalContext.current
+
+    // ── Loop swiping: use a large virtual page count so user can swipe endlessly ──
+    val actualCount = mediaFiles.size
+    val virtualPageCount = if (loopEnabled && actualCount > 1) actualCount * 10_000 else actualCount
+    val virtualInitialPage = if (loopEnabled && actualCount > 1) {
+        // Start in the middle of the virtual range at the correct offset
+        (5_000 * actualCount) + initialIndex
+    } else {
+        initialIndex
+    }
+
     val pagerState = rememberPagerState(
-        initialPage = initialIndex,
-        pageCount = { mediaFiles.size }
+        initialPage = virtualInitialPage,
+        pageCount = { virtualPageCount }
     )
 
-    val currentFile = mediaFiles.getOrNull(pagerState.settledPage)
+    // Map virtual page to actual index
+    fun virtualToActual(virtualPage: Int): Int {
+        return if (loopEnabled && actualCount > 1) virtualPage.mod(actualCount) else virtualPage
+    }
+
+    val currentFile = mediaFiles.getOrNull(virtualToActual(pagerState.settledPage))
     var isImmersive by remember { mutableStateOf(false) }
 
     // ── Audio playlist mapping ──────────────────────────────────────────
@@ -237,10 +255,12 @@ fun MediaViewerScreen(
         snapshotFlow { pagerState.settledPage }.collect { page ->
             isImmersive = false
 
-            val playlistIdx = pageToPlaylistIndex[page]
+            val actualPage = virtualToActual(page)
+
+            val playlistIdx = pageToPlaylistIndex[actualPage]
             if (playlistIdx != null) {
                 // Landed on an audio page
-                musicController?.let { mc -> syncAudioToPage(mc, page) }
+                musicController?.let { mc -> syncAudioToPage(mc, actualPage) }
             } else {
                 // Non-audio page — pause audio if playing
                 musicController?.let { mc ->
@@ -255,19 +275,30 @@ fun MediaViewerScreen(
     // MediaController was ready (musicController was null at that point).
     LaunchedEffect(musicController) {
         val mc = musicController ?: return@LaunchedEffect
-        val page = pagerState.settledPage
-        val playlistIdx = pageToPlaylistIndex[page]
+        val actualPage = virtualToActual(pagerState.settledPage)
+        val playlistIdx = pageToPlaylistIndex[actualPage]
         if (playlistIdx != null) {
-            syncAudioToPage(mc, page)
+            syncAudioToPage(mc, actualPage)
         }
     }
 
     // ── Player track changed externally (notification skip) → scroll pager ──
     LaunchedEffect(playerTrackIndex) {
         if (playerTrackIndex >= 0) {
-            val targetPage = playlistToPageIndex[playerTrackIndex]
-            if (targetPage != null && targetPage != pagerState.settledPage) {
-                pagerState.animateScrollToPage(targetPage)
+            val targetActualPage = playlistToPageIndex[playerTrackIndex]
+            if (targetActualPage != null) {
+                val currentActualPage = virtualToActual(pagerState.settledPage)
+                if (currentActualPage != targetActualPage) {
+                    if (loopEnabled && actualCount > 1) {
+                        // Calculate the nearest virtual page for the target actual page
+                        val currentVirtual = pagerState.settledPage
+                        val currentOffset = currentVirtual - currentActualPage
+                        val targetVirtual = currentOffset + targetActualPage
+                        pagerState.animateScrollToPage(targetVirtual)
+                    } else {
+                        pagerState.animateScrollToPage(targetActualPage)
+                    }
+                }
             }
         }
     }
@@ -317,9 +348,10 @@ fun MediaViewerScreen(
             state = pagerState,
             modifier = Modifier.fillMaxSize(),
             beyondViewportPageCount = 0,   // prevent pre-rendering adjacent pages
-            key = { mediaFiles[it].absolutePath }
+            key = { "${it}_${mediaFiles[virtualToActual(it)].absolutePath}" }
         ) { page ->
-            val file = mediaFiles[page]
+            val actualPage = virtualToActual(page)
+            val file = mediaFiles[actualPage]
             val isCurrentPage = pagerState.settledPage == page
 
             when {
@@ -361,7 +393,7 @@ fun MediaViewerScreen(
                             fontWeight = FontWeight.Bold
                         )
                         Text(
-                            text = "${pagerState.settledPage + 1} / ${mediaFiles.size}",
+                            text = "${virtualToActual(pagerState.settledPage) + 1} / ${actualCount}",
                             style = MaterialTheme.typography.bodySmall,
                             color = Color.White.copy(alpha = 0.7f)
                         )
@@ -419,9 +451,20 @@ private fun VideoPage(
     onImmersiveChange: (Boolean) -> Unit
 ) {
     val context = LocalContext.current
+    val mediaUri = remember(file.absolutePath) { android.net.Uri.fromFile(file) }
 
     val exoPlayer = remember(file.absolutePath) {
         ExoPlayer.Builder(context)
+            .setLoadControl(
+                DefaultLoadControl.Builder()
+                    .setBufferDurationsMs(
+                        /* minBufferMs = */ 2_000,
+                        /* maxBufferMs = */ 10_000,
+                        /* bufferForPlaybackMs = */ 300,
+                        /* bufferForPlaybackAfterRebufferMs = */ 700
+                    )
+                    .build()
+            )
             .setAudioAttributes(
                 AudioAttributes.Builder()
                     .setContentType(C.AUDIO_CONTENT_TYPE_MOVIE)
@@ -430,25 +473,31 @@ private fun VideoPage(
                 /* handleAudioFocus = */ true
             )
             .setHandleAudioBecomingNoisy(true)
-            .build().apply {
-                setMediaItem(MediaItem.fromUri(android.net.Uri.fromFile(file)))
-                prepare()
-            }
+            .build()
     }
 
-    LaunchedEffect(isActive) {
-        if (!isActive) {
-            exoPlayer.playWhenReady = false
-        } else {
+    LaunchedEffect(isActive, mediaUri) {
+        if (isActive) {
+            if (exoPlayer.currentMediaItem == null) {
+                exoPlayer.setMediaItem(MediaItem.fromUri(mediaUri))
+                exoPlayer.prepare()
+            }
             // Explicitly pause music service when video page becomes active
             musicController?.let { mc ->
                 if (mc.isPlaying) mc.pause()
             }
+        } else {
+            // Release decoder/sample buffers as soon as page is no longer active.
+            exoPlayer.pause()
+            exoPlayer.stop()
+            exoPlayer.clearMediaItems()
         }
     }
 
     DisposableEffect(file.absolutePath) {
         onDispose {
+            exoPlayer.stop()
+            exoPlayer.clearMediaItems()
             exoPlayer.release()
         }
     }
@@ -482,6 +531,9 @@ private fun VideoPage(
                         }
                     )
                 }
+            },
+            update = { playerView ->
+                playerView.player = exoPlayer
             },
             modifier = Modifier.fillMaxSize()
         )
