@@ -3,7 +3,14 @@ package com.gmail.omkarjoshi1989.ui.screens
 import android.view.ViewGroup
 import android.widget.FrameLayout
 import androidx.annotation.OptIn
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -20,7 +27,7 @@ import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.AudioFile
+
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
@@ -28,7 +35,6 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
@@ -47,12 +53,16 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
@@ -77,9 +87,79 @@ fun MediaViewerScreen(
     )
 
     val currentFile = mediaFiles.getOrNull(pagerState.currentPage)
+    var isImmersive by remember { mutableStateOf(false) }
 
-    Scaffold(
-        topBar = {
+    // Reset immersive mode on page change
+    LaunchedEffect(Unit) {
+        snapshotFlow { pagerState.currentPage }.collect {
+            isImmersive = false
+        }
+    }
+
+    // Control system bars
+    val view = LocalView.current
+    val activity = (view.context as? android.app.Activity)
+
+    LaunchedEffect(isImmersive) {
+        activity?.window?.let { window ->
+            val controller = WindowCompat.getInsetsController(window, view)
+            if (isImmersive) {
+                controller.hide(WindowInsetsCompat.Type.systemBars())
+                controller.systemBarsBehavior =
+                    WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+            } else {
+                controller.show(WindowInsetsCompat.Type.systemBars())
+            }
+        }
+    }
+
+    // Restore system bars when leaving
+    DisposableEffect(Unit) {
+        onDispose {
+            activity?.window?.let { window ->
+                val controller = WindowCompat.getInsetsController(window, view)
+                controller.show(WindowInsetsCompat.Type.systemBars())
+            }
+        }
+    }
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Black)
+    ) {
+        HorizontalPager(
+            state = pagerState,
+            modifier = Modifier.fillMaxSize(),
+            key = { mediaFiles[it].absolutePath }
+        ) { page ->
+            val file = mediaFiles[page]
+            val isCurrentPage = pagerState.currentPage == page
+
+            when {
+                FileUtils.isImageFile(file) -> ImagePage(
+                    file = file,
+                    onTap = { isImmersive = !isImmersive }
+                )
+                FileUtils.isVideoFile(file) -> VideoPage(
+                    file = file,
+                    isActive = isCurrentPage,
+                    onImmersiveChange = { immersive -> isImmersive = immersive }
+                )
+                FileUtils.isAudioFile(file) -> AudioPage(
+                    file = file,
+                    isActive = isCurrentPage,
+                    onTap = { isImmersive = !isImmersive }
+                )
+            }
+        }
+
+        // Top bar overlay with animation
+        AnimatedVisibility(
+            visible = !isImmersive,
+            enter = slideInVertically(initialOffsetY = { -it }) + fadeIn(),
+            exit = slideOutVertically(targetOffsetY = { -it }) + fadeOut()
+        ) {
             TopAppBar(
                 title = {
                     Column {
@@ -93,7 +173,7 @@ fun MediaViewerScreen(
                         Text(
                             text = "${pagerState.currentPage + 1} / ${mediaFiles.size}",
                             style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                            color = Color.White.copy(alpha = 0.7f)
                         )
                     }
                 },
@@ -109,36 +189,23 @@ fun MediaViewerScreen(
                     containerColor = Color.Black.copy(alpha = 0.85f),
                     titleContentColor = Color.White,
                     navigationIconContentColor = Color.White
-                )
+                ),
+                modifier = Modifier.systemBarsPadding()
             )
-        },
-        containerColor = Color.Black
-    ) { innerPadding ->
-        HorizontalPager(
-            state = pagerState,
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(innerPadding),
-            key = { mediaFiles[it].absolutePath }
-        ) { page ->
-            val file = mediaFiles[page]
-            val isCurrentPage = pagerState.currentPage == page
-
-            when {
-                FileUtils.isImageFile(file) -> ImagePage(file = file)
-                FileUtils.isVideoFile(file) -> VideoPage(file = file, isActive = isCurrentPage)
-                FileUtils.isAudioFile(file) -> AudioPage(file = file, isActive = isCurrentPage)
-            }
         }
     }
 }
 
 @Composable
-private fun ImagePage(file: File) {
+private fun ImagePage(file: File, onTap: () -> Unit) {
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color.Black),
+            .background(Color.Black)
+            .clickable(
+                indication = null,
+                interactionSource = remember { MutableInteractionSource() }
+            ) { onTap() },
         contentAlignment = Alignment.Center
     ) {
         AsyncImage(
@@ -155,7 +222,7 @@ private fun ImagePage(file: File) {
 
 @OptIn(UnstableApi::class)
 @Composable
-private fun VideoPage(file: File, isActive: Boolean) {
+private fun VideoPage(file: File, isActive: Boolean, onImmersiveChange: (Boolean) -> Unit) {
     val context = LocalContext.current
 
     val exoPlayer = remember(file.absolutePath) {
@@ -165,7 +232,6 @@ private fun VideoPage(file: File, isActive: Boolean) {
         }
     }
 
-    // Pause when swiped away, don't autoplay
     LaunchedEffect(isActive) {
         if (!isActive) {
             exoPlayer.playWhenReady = false
@@ -189,9 +255,22 @@ private fun VideoPage(file: File, isActive: Boolean) {
                 PlayerView(ctx).apply {
                     player = exoPlayer
                     useController = true
+                    controllerAutoShow = true
+                    controllerShowTimeoutMs = 3000
+                    controllerHideOnTouch = true
+                    setShowNextButton(false)
+                    setShowPreviousButton(false)
+                    setShowFastForwardButton(true)
+                    setShowRewindButton(true)
                     layoutParams = FrameLayout.LayoutParams(
                         ViewGroup.LayoutParams.MATCH_PARENT,
                         ViewGroup.LayoutParams.MATCH_PARENT
+                    )
+                    setControllerVisibilityListener(
+                        PlayerView.ControllerVisibilityListener { visibility ->
+                            val controllerVisible = visibility == android.view.View.VISIBLE
+                            onImmersiveChange(!controllerVisible)
+                        }
                     )
                 }
             },
@@ -201,7 +280,7 @@ private fun VideoPage(file: File, isActive: Boolean) {
 }
 
 @Composable
-private fun AudioPage(file: File, isActive: Boolean) {
+private fun AudioPage(file: File, isActive: Boolean, onTap: () -> Unit) {
     val context = LocalContext.current
 
     val exoPlayer = remember(file.absolutePath) {
@@ -252,7 +331,11 @@ private fun AudioPage(file: File, isActive: Boolean) {
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color.Black),
+            .background(Color.Black)
+            .clickable(
+                indication = null,
+                interactionSource = remember { MutableInteractionSource() }
+            ) { onTap() },
         contentAlignment = Alignment.Center
     ) {
         Column(
@@ -365,4 +448,3 @@ private fun formatTime(ms: Long): String {
     val seconds = totalSeconds % 60
     return "$minutes:${seconds.toString().padStart(2, '0')}"
 }
-
