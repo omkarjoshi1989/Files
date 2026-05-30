@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
@@ -42,6 +43,9 @@ fun SettingsScreen(
     val context = LocalContext.current
     var masterPasswordEnabled by remember {
         mutableStateOf(SettingsManager.isMasterPasswordEnabled(context))
+    }
+    var showHiddenFiles by remember {
+        mutableStateOf(SettingsManager.isShowHiddenFiles(context))
     }
     var showDisableConfirmation by remember { mutableStateOf(false) }
 
@@ -128,6 +132,42 @@ fun SettingsScreen(
                         } else {
                             showDisableConfirmation = true
                         }
+                    }
+                )
+            }
+            HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
+
+            // Show Hidden Files setting
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 14.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.Visibility,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary
+                )
+                Spacer(modifier = Modifier.width(16.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "Show Hidden Files",
+                        style = MaterialTheme.typography.bodyLarge,
+                        fontWeight = FontWeight.Medium
+                    )
+                    Text(
+                        text = if (showHiddenFiles) "Hidden files and folders are visible"
+                        else "Hidden files and folders are not shown",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Switch(
+                    checked = showHiddenFiles,
+                    onCheckedChange = { enabled ->
+                        showHiddenFiles = enabled
+                        SettingsManager.setShowHiddenFiles(context, enabled)
                     }
                 )
             }

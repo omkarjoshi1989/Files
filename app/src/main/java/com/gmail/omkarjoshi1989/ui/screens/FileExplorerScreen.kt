@@ -29,8 +29,6 @@ import androidx.compose.material.icons.filled.CreateNewFolder
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.DriveFileRenameOutline
 import androidx.compose.material.icons.filled.NoteAdd
-import androidx.compose.material.icons.filled.Visibility
-import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
@@ -149,18 +147,6 @@ fun FileExplorerScreen(
                                     showAddMenu = false
                                 },
                                 leadingIcon = { Icon(Icons.Filled.NoteAdd, contentDescription = null) }
-                            )
-                        }
-                        IconButton(onClick = { viewModel.toggleHiddenFiles() }) {
-                            Icon(
-                                imageVector = if (uiState.showHiddenFiles)
-                                    Icons.Filled.Visibility
-                                else
-                                    Icons.Filled.VisibilityOff,
-                                contentDescription = if (uiState.showHiddenFiles)
-                                    "Hide hidden files"
-                                else
-                                    "Show hidden files"
                             )
                         }
                     },

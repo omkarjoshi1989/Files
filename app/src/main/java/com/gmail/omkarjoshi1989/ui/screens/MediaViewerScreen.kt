@@ -27,7 +27,6 @@ import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
@@ -64,6 +63,8 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
+import androidx.media3.common.AudioAttributes
+import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.Player
@@ -329,6 +330,7 @@ fun MediaViewerScreen(
                 FileUtils.isVideoFile(file) -> VideoPage(
                     file = file,
                     isActive = isCurrentPage,
+                    musicController = musicController,
                     onImmersiveChange = { immersive -> isImmersive = immersive }
                 )
                 FileUtils.isAudioFile(file) -> AudioPage(
@@ -410,19 +412,38 @@ private fun ImagePage(file: File, onTap: () -> Unit) {
 
 @OptIn(UnstableApi::class)
 @Composable
-private fun VideoPage(file: File, isActive: Boolean, onImmersiveChange: (Boolean) -> Unit) {
+private fun VideoPage(
+    file: File,
+    isActive: Boolean,
+    musicController: MediaController?,
+    onImmersiveChange: (Boolean) -> Unit
+) {
     val context = LocalContext.current
 
     val exoPlayer = remember(file.absolutePath) {
-        ExoPlayer.Builder(context).build().apply {
-            setMediaItem(MediaItem.fromUri(android.net.Uri.fromFile(file)))
-            prepare()
-        }
+        ExoPlayer.Builder(context)
+            .setAudioAttributes(
+                AudioAttributes.Builder()
+                    .setContentType(C.AUDIO_CONTENT_TYPE_MOVIE)
+                    .setUsage(C.USAGE_MEDIA)
+                    .build(),
+                /* handleAudioFocus = */ true
+            )
+            .setHandleAudioBecomingNoisy(true)
+            .build().apply {
+                setMediaItem(MediaItem.fromUri(android.net.Uri.fromFile(file)))
+                prepare()
+            }
     }
 
     LaunchedEffect(isActive) {
         if (!isActive) {
             exoPlayer.playWhenReady = false
+        } else {
+            // Explicitly pause music service when video page becomes active
+            musicController?.let { mc ->
+                if (mc.isPlaying) mc.pause()
+            }
         }
     }
 

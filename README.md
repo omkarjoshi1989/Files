@@ -52,7 +52,7 @@
 
 | #  | Feature                                                                                                   | Status  | Notes                                                                       |
 |----|-----------------------------------------------------------------------------------------------------------|---------|-----------------------------------------------------------------------------|
-| 1  | Music screen (group by folder)                                                                            | Pending |                                                                             |
+| 1  | Music Tiles (group by folder)                                                                             | Pending |                                                                             |
 | 2  | Music play in background even after app is closed                                                         | ✅ Done  | Service keeps playing on dispose; state hoisting ensures UI syncs on return |
 | 3  | Music play screen: add controls like repeat song, repeat entire folder audio files, shuffle, and seek bar | Pending |                                                                             |
 | 4  | Music play screen: show song title, artist name, and album name                                           | Pending |                                                                             |
@@ -127,5 +127,3 @@ checking for password and launching password entering screen if password is set.
 we can check `savedInstanceState == null` in `onCreate()` to ensure the password check only triggers on a fresh launch.
 we can add a flag to check if the activity is being recreated due to rotation and skip the password 
 check in that case.
-2. Music playback and video playback on different streams it seems. Due to this issue
-3. Music player skipping tracks. There is some issue like file name displayed for music play is not the audio file which is playing 

@@ -47,7 +47,7 @@ enum class Screen {
     HOME, FILE_EXPLORER, RECENT_FILES, SETTINGS
 }
 
-class MainActivity : ComponentActivity() {
+class TilesActivity : ComponentActivity() {
 
     private var hasStoragePermission by mutableStateOf(false)
     private var isAuthenticated by mutableStateOf(false)
@@ -130,7 +130,7 @@ class MainActivity : ComponentActivity() {
                             SettingsScreen(
                                 onNavigateBack = {
                                     // Re-read setting when leaving settings
-                                    masterPasswordEnabled = SettingsManager.isMasterPasswordEnabled(this@MainActivity)
+                                    masterPasswordEnabled = SettingsManager.isMasterPasswordEnabled(this@TilesActivity)
                                     currentScreen = Screen.HOME
                                 }
                             )

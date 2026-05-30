@@ -1,13 +1,16 @@
 package com.gmail.omkarjoshi1989.viewmodel
 
+import android.app.Application
 import android.content.Context
 import android.content.Intent
+import android.content.SharedPreferences
 import android.net.Uri
 import android.os.Environment
 import android.webkit.MimeTypeMap
 import androidx.core.content.FileProvider
-import androidx.lifecycle.ViewModel
+import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.gmail.omkarjoshi1989.util.SettingsManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -36,16 +39,34 @@ data class FileExplorerUiState(
     val operationMessage: String? = null
 )
 
-class FileExplorerViewModel : ViewModel() {
+class FileExplorerViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _currentPath = MutableStateFlow(Environment.getExternalStorageDirectory().absolutePath)
-    private val _showHiddenFiles = MutableStateFlow(false)
+    private val _showHiddenFiles = MutableStateFlow(SettingsManager.isShowHiddenFiles(application))
     private val _clipboard = MutableStateFlow<ClipboardData?>(null)
     private val _isLoading = MutableStateFlow(false)
     private val _isRefreshing = MutableStateFlow(false)
     private val _errorMessage = MutableStateFlow<String?>(null)
     private val _operationMessage = MutableStateFlow<String?>(null)
     private val _fileListTrigger = MutableStateFlow(0L) // bump to refresh
+
+    private val prefListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
+        if (key == "show_hidden_files") {
+            _showHiddenFiles.value = SettingsManager.isShowHiddenFiles(application)
+        }
+    }
+
+    init {
+        application.getSharedPreferences("app_settings", Context.MODE_PRIVATE)
+            .registerOnSharedPreferenceChangeListener(prefListener)
+    }
+
+    override fun onCleared() {
+        super.onCleared()
+        getApplication<Application>()
+            .getSharedPreferences("app_settings", Context.MODE_PRIVATE)
+            .unregisterOnSharedPreferenceChangeListener(prefListener)
+    }
 
     val uiState: StateFlow<FileExplorerUiState> = combine(
         _currentPath,
@@ -99,9 +120,6 @@ class FileExplorerViewModel : ViewModel() {
         }
     }
 
-    fun toggleHiddenFiles() {
-        _showHiddenFiles.value = !_showHiddenFiles.value
-    }
 
     fun cutFile(file: File) {
         _clipboard.value = ClipboardData(file, ClipboardOperation.CUT)
@@ -288,4 +306,3 @@ class FileExplorerViewModel : ViewModel() {
         }
     }
 }
-
