@@ -31,6 +31,10 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Repeat
+import androidx.compose.material.icons.filled.RepeatOne
+// Shuffle removed: no import
+import androidx.compose.material3.Slider
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -88,6 +92,9 @@ import com.gmail.omkarjoshi1989.util.FileUtils
 import com.google.common.util.concurrent.MoreExecutors
 import kotlinx.coroutines.delay
 import java.io.File
+import android.content.Context
+import androidx.compose.foundation.layout.width
+import androidx.core.content.edit
 
 @kotlin.OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -144,6 +151,9 @@ fun MediaViewerScreen(
     var isAudioPlaying by remember { mutableStateOf(false) }
     var audioPosition by remember { mutableLongStateOf(0L) }
     var audioDuration by remember { mutableLongStateOf(0L) }
+    // repeat/shuffle state are maintained per-audio page below
+    // Hoist repeat mode so the UI can reflect the player's repeat state across pages.
+    var repeatMode by remember { mutableIntStateOf(Player.REPEAT_MODE_ALL) }
     // Tracks the player's current media-item index inside the playlist.
     // -1 means "no audio track active yet".
     var playerTrackIndex by remember { mutableIntStateOf(-1) }
@@ -194,11 +204,12 @@ fun MediaViewerScreen(
                         if (mc.duration > 0) audioDuration = mc.duration
                         audioPosition = mc.currentPosition
                         playerTrackIndex = mc.currentMediaItemIndex
+                        // Sync the UI repeat mode from the player
+                        try { repeatMode = mc.repeatMode } catch (_: Exception) { }
+                    } else {
+                        // If we are about to load a new playlist later, prefer the UI's repeatMode
+                        try { mc.repeatMode = repeatMode } catch (_: Exception) { }
                     }
-                    // If NOT same playlist, we defer loading until the user actually
-                    // lands on an audio page (see snapshotFlow below).  This avoids
-                    // overriding a playing track from a different folder when the user
-                    // only opened an image.
 
                     // Listen for state changes from the player / notification controls
                     mc.addListener(object : Player.Listener {
@@ -217,10 +228,14 @@ fun MediaViewerScreen(
                             audioDuration = if (mc.duration > 0) mc.duration else 0L
                             audioPosition = mc.currentPosition
                         }
+
+                        override fun onRepeatModeChanged(repeatModeFromPlayer: Int) {
+                            repeatMode = repeatModeFromPlayer
+                        }
                     })
-                },
-                MoreExecutors.directExecutor()
-            )
+                 },
+                 MoreExecutors.directExecutor()
+             )
 
             onDispose {
                 MediaController.releaseFuture(controllerFuture)
@@ -238,6 +253,9 @@ fun MediaViewerScreen(
             // First time landing on audio — load the full playlist at the correct track
             mc.setMediaItems(audioMediaItems, playlistIdx, 0L)
             mc.prepare()
+            // Do not override existing repeatMode here; the UI's hoisted `repeatMode`
+            // was already applied to the controller when it connected. This preserves
+            // the user's repeat choice across swipes.
             mc.play()                      // ← auto-play
             playlistLoaded = true
             playerTrackIndex = playlistIdx
@@ -311,9 +329,10 @@ fun MediaViewerScreen(
     }
 
     // ── Periodic position update while audio is playing ─────────────────
-    LaunchedEffect(isAudioPlaying) {
-        while (isAudioPlaying) {
-            musicController?.let { audioPosition = it.currentPosition }
+    // Keep position updated regardless of play state so the seekbar stays in sync.
+    LaunchedEffect(musicController) {
+        while (musicController != null) {
+            musicController?.let { audioPosition = it.currentPosition; audioDuration = if (it.duration > 0) it.duration else audioDuration }
             delay(500)
         }
     }
@@ -378,6 +397,14 @@ fun MediaViewerScreen(
                     isPlaying = isAudioPlaying && isCurrentPage,
                     currentPosition = if (isCurrentPage) audioPosition else 0L,
                     duration = if (isCurrentPage) audioDuration else 0L,
+                    repeatMode = repeatMode,
+                    onToggleRepeat = {
+                        val next = if (repeatMode == Player.REPEAT_MODE_ONE) Player.REPEAT_MODE_ALL else Player.REPEAT_MODE_ONE
+                        repeatMode = next
+                        musicController?.let { mc ->
+                            try { mc.repeatMode = next } catch (_: Exception) { try { mc.setRepeatMode(next) } catch (_: Exception) {} }
+                        }
+                    },
                     onTap = { isImmersive = !isImmersive }
                 )
             }
@@ -489,12 +516,24 @@ private fun VideoPage(
                 exoPlayer.setMediaItem(MediaItem.fromUri(mediaUri))
                 exoPlayer.prepare()
             }
+            // Restore last-played position for this video if available
+            try {
+                val prefs = context.getSharedPreferences("media_positions", Context.MODE_PRIVATE)
+                val saved = prefs.getLong(file.absolutePath, 0L)
+                if (saved > 0L) exoPlayer.seekTo(saved)
+            } catch (_: Exception) {
+            }
             // Explicitly pause music service when video page becomes active
             musicController?.let { mc ->
                 if (mc.isPlaying) mc.pause()
             }
         } else {
             // Release decoder/sample buffers as soon as page is no longer active.
+            // Save current playback position for resume
+            try {
+                val prefs = context.getSharedPreferences("media_positions", Context.MODE_PRIVATE)
+                prefs.edit { putLong(file.absolutePath, exoPlayer.currentPosition) }
+            } catch (_: Exception) {}
             exoPlayer.pause()
             exoPlayer.stop()
             exoPlayer.clearMediaItems()
@@ -503,6 +542,11 @@ private fun VideoPage(
 
     DisposableEffect(file.absolutePath) {
         onDispose {
+            // Persist position when the page is disposed
+            try {
+                val prefs = context.getSharedPreferences("media_positions", Context.MODE_PRIVATE)
+                prefs.edit { putLong(file.absolutePath, exoPlayer.currentPosition) }
+            } catch (_: Exception) {}
             exoPlayer.stop()
             exoPlayer.clearMediaItems()
             exoPlayer.release()
@@ -558,6 +602,8 @@ private fun AudioPage(
     isPlaying: Boolean,
     currentPosition: Long,
     duration: Long,
+    repeatMode: Int,
+    onToggleRepeat: () -> Unit,
     onTap: () -> Unit
 ) {
     Box(
@@ -639,16 +685,38 @@ private fun AudioPage(
 
             Spacer(modifier = Modifier.height(32.dp))
 
-            // Progress bar
-            val progress = if (duration > 0) currentPosition.toFloat() / duration.toFloat() else 0f
-            androidx.compose.material3.LinearProgressIndicator(
-                progress = { progress },
+            // Seek / Progress controls
+            var isSeeking by remember { mutableStateOf(false) }
+            var seekPosition by remember { mutableLongStateOf(currentPosition) }
+
+            val progressFraction = if (duration > 0) {
+                if (isSeeking) seekPosition.toFloat() / duration.toFloat() else currentPosition.toFloat() / duration.toFloat()
+            } else 0f
+
+            Slider(
+                value = progressFraction,
+                onValueChange = { fraction ->
+                    if (duration > 0) {
+                        isSeeking = true
+                        seekPosition = (fraction * duration).toLong()
+                    }
+                },
+                onValueChangeFinished = {
+                    controller?.let { mc ->
+                        if (duration > 0) {
+                            try {
+                                mc.seekTo(seekPosition)
+                            } catch (_: Exception) {
+                                try { mc.seekToDefaultPosition() } catch (_: Exception) {}
+                            }
+                        }
+                    }
+                    isSeeking = false
+                },
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(4.dp)
-                    .clip(RoundedCornerShape(2.dp)),
-                color = Color(0xFFFF9800),
-                trackColor = Color.White.copy(alpha = 0.2f)
+                    .height(24.dp),
+                valueRange = 0f..1f
             )
 
             Spacer(modifier = Modifier.height(8.dp))
@@ -671,6 +739,25 @@ private fun AudioPage(
             }
 
             Spacer(modifier = Modifier.height(24.dp))
+            // Repeat controls (default: repeat all songs; toggle to repeat one)
+            Row(
+                horizontalArrangement = Arrangement.Center,
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                // Repeat: toggle between all -> one
+                IconButton(onClick = { onToggleRepeat() }) {
+                    val tint = if (repeatMode == Player.REPEAT_MODE_ONE) Color(0xFFFF9800) else Color.White.copy(alpha = 0.7f)
+                    Icon(
+                        imageVector = if (repeatMode == Player.REPEAT_MODE_ONE) Icons.Filled.RepeatOne else Icons.Filled.Repeat,
+                        contentDescription = "Repeat",
+                        tint = tint
+                    )
+                }
+                Spacer(modifier = Modifier.width(24.dp))
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
 
             // Play/Pause button
             IconButton(

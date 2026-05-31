@@ -43,6 +43,12 @@
             android:theme="@style/Theme.Files"
             android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize" />
 
+        <activity
+            android:name=".PdfViewerActivity"
+            android:exported="false"
+            android:theme="@style/Theme.Files"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize" />
+
         <service
             android:name=".service.MusicPlaybackService"
             android:exported="true"

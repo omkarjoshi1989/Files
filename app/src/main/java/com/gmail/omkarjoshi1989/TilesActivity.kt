@@ -262,6 +262,12 @@ class TilesActivity : ComponentActivity() {
         if (FileUtils.isZipFile(file)) {
             zipFileToView = file
             currentScreen = Screen.ZIP_VIEWER
+        } else if (FileUtils.isPdfFile(file)) {
+            // Open single PDF in the built-in viewer — no sibling swiping
+            val intent = Intent(this, PdfViewerActivity::class.java).apply {
+                putExtra(PdfViewerActivity.EXTRA_FILE_PATH, file.absolutePath)
+            }
+            startActivity(intent)
         } else if (FileUtils.isMediaFile(file)) {
             // Open in built-in media viewer
             val intent = Intent(this, MediaViewerActivity::class.java).apply {
