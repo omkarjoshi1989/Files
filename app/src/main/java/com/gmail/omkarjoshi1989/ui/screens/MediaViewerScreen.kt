@@ -21,6 +21,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
@@ -76,6 +77,12 @@ import androidx.media3.session.SessionToken
 import androidx.media3.ui.PlayerView
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
+import androidx.compose.runtime.produceState
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.media.MediaMetadataRetriever
 import com.gmail.omkarjoshi1989.service.MusicPlaybackService
 import com.gmail.omkarjoshi1989.util.FileUtils
 import com.google.common.util.concurrent.MoreExecutors
@@ -568,20 +575,44 @@ private fun AudioPage(
             verticalArrangement = Arrangement.Center,
             modifier = Modifier.padding(32.dp)
         ) {
-            // Audio icon
-            Box(
-                modifier = Modifier
-                    .size(120.dp)
-                    .clip(RoundedCornerShape(24.dp))
-                    .background(Color(0xFFFF9800).copy(alpha = 0.2f)),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    imageVector = Icons.Filled.MusicNote,
-                    contentDescription = "Audio",
-                    modifier = Modifier.size(64.dp),
-                    tint = Color(0xFFFF9800)
+            // Album art: fill width (left/right) and wrap height to preserve aspect ratio
+            val albumArt by produceState<Bitmap?>(initialValue = null, key1 = file.absolutePath) {
+                value = try {
+                    withContext(Dispatchers.IO) { loadAlbumArt(file) }
+                } catch (_: Exception) {
+                    null
+                }
+            }
+
+            if (albumArt != null) {
+                AsyncImage(
+                    model = ImageRequest.Builder(LocalContext.current)
+                        .data(albumArt)
+                        .crossfade(true)
+                        .build(),
+                    contentDescription = "Album art",
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .wrapContentHeight()
+                        .clip(RoundedCornerShape(12.dp)),
+                    contentScale = ContentScale.Fit
                 )
+            } else {
+                // Fallback audio icon when no art embedded
+                Box(
+                    modifier = Modifier
+                        .size(120.dp)
+                        .clip(RoundedCornerShape(24.dp))
+                        .background(Color(0xFFFF9800).copy(alpha = 0.2f)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.MusicNote,
+                        contentDescription = "Audio",
+                        modifier = Modifier.size(64.dp),
+                        tint = Color(0xFFFF9800)
+                    )
+                }
             }
 
             Spacer(modifier = Modifier.height(24.dp))
@@ -675,3 +706,20 @@ private fun formatTime(ms: Long): String {
     val seconds = totalSeconds % 60
     return "$minutes:${seconds.toString().padStart(2, '0')}"
 }
+
+private fun loadAlbumArt(file: File): Bitmap? {
+    val mmr = MediaMetadataRetriever()
+    return try {
+        mmr.setDataSource(file.absolutePath)
+        val art = mmr.embeddedPicture
+        if (art != null) BitmapFactory.decodeByteArray(art, 0, art.size) else null
+    } catch (_: Exception) {
+        null
+    } finally {
+        try {
+            mmr.release()
+        } catch (_: Exception) {
+        }
+    }
+}
+
