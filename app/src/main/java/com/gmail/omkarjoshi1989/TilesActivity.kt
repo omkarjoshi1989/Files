@@ -116,7 +116,6 @@ class TilesActivity : ComponentActivity() {
                                 val state = fileViewModel.uiState.value
                                 when {
                                     state.isSearchActive -> fileViewModel.toggleSearch()
-                                    state.isSelectionMode -> fileViewModel.clearSelection()
                                     !fileViewModel.navigateUp() -> handleExitBackPress()
                                 }
                             }

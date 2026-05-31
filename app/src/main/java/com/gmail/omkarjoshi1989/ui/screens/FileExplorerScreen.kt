@@ -1,7 +1,9 @@
 package com.gmail.omkarjoshi1989.ui.screens
 
 import android.text.format.DateFormat
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
@@ -55,7 +57,6 @@ import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
-import androidx.compose.material3.Checkbox
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
@@ -138,6 +139,18 @@ fun FileExplorerScreen(
 
     // Converts selectedPaths to File list (used for batch clipboard ops)
     fun selectedFiles(): List<File> = selectedPaths.map { File(it) }
+
+    // ── Back handler: when in selection mode, clear selection + clipboard ────
+    // Placed here so it takes priority over the Activity-level BackHandler.
+    // Rule:
+    //   • Still in selection mode (no cut/copy done yet) → clear selection AND clipboard.
+    //   • NOT in selection mode (cut/copy already committed, selectedPaths was emptied) →
+    //     Activity-level handler fires → navigates up, clipboard is preserved.
+    BackHandler(enabled = isSelectionMode) {
+        selectedPaths = emptySet()
+        selectedFile = null
+        viewModel.clearClipboard()
+    }
 
     LaunchedEffect(uiState.errorMessage) {
         uiState.errorMessage?.let { snackbarHostState.showSnackbar(it); viewModel.clearError() }
@@ -322,7 +335,9 @@ fun FileExplorerScreen(
                     navigationIcon = {
                         IconButton(onClick = {
                             if (isSelectionMode) {
+                                // Exiting selection mode without cut/copy → discard clipboard too
                                 selectedPaths = emptySet(); selectedFile = null
+                                viewModel.clearClipboard()
                             } else when {
                                 uiState.isSearchActive -> viewModel.toggleSearch()
                                 !viewModel.navigateUp() -> onNavigateBack()
@@ -769,9 +784,11 @@ fun FileListItem(
     onLongClick: () -> Unit
 ) {
     val isHidden = file.name.startsWith(".")
+    val selectionColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)
     Column(
         modifier = Modifier
             .fillMaxWidth()
+            .background(if (isSelected) selectionColor else androidx.compose.ui.graphics.Color.Transparent)
             .alpha(if (isHidden) 0.5f else 1f)
             .combinedClickable(onClick = { if (isSelectionMode) onSelectionToggle() else onClick() }, onLongClick = onLongClick)
     ) {
@@ -781,13 +798,8 @@ fun FileListItem(
                 .padding(horizontal = 16.dp, vertical = 12.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            if (isSelectionMode) {
-                Checkbox(checked = isSelected, onCheckedChange = { onSelectionToggle() })
-                Spacer(modifier = Modifier.width(12.dp))
-            } else {
-                FileThumbnail(file = file, size = 40.dp)
-                Spacer(modifier = Modifier.width(12.dp))
-            }
+            FileThumbnail(file = file, size = 40.dp)
+            Spacer(modifier = Modifier.width(12.dp))
 
             Column(modifier = Modifier.weight(1f)) {
                 Text(
@@ -834,7 +846,7 @@ fun FileListItem(
             }
         }
         HorizontalDivider(
-            modifier = Modifier.padding(start = if (isSelectionMode) 56.dp else 68.dp),
+            modifier = Modifier.padding(start = 68.dp),
             color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
         )
     }
