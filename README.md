@@ -25,7 +25,7 @@
 | 19 | Multi-select files for batch operations                                                               | ✅ Done  | Long-press → "Select" in bottom sheet enters selection mode; batch Delete / Cut / Copy / Zip via bottom bar; "All" selects everything; ✕ exits                                                                     |
 | 20 | Zip/Unzip support                                                                                     | ✅ Done  | Multi-select → Zip icon → enter name dialog → creates .zip; long-press .zip file → "Unzip here" extracts to same folder                                                                                            |
 | 21 | Favorite files section in Tile activity and support to change favorite status for each and every file | ✅ Done  | Long-press any file → "Add to Favorites" / "Remove from Favorites" in bottom sheet; star badge on favorited items in explorer; Favorites screen accessible from the ⋮ menu; tap star in Favorites screen to remove |
-| 22 | Any file can be shared onto suitable phone apps                                                       | Pending |                                                                                                                                                                                                                    | 
+| 22 | Any file can be shared onto suitable phone apps                                                       | ✅ Done  |                                                                                                                                                                                                                    | 
 
 ## Media Viewer (Swipeable)
 
@@ -33,7 +33,6 @@
 |---|--------------------------------------------------------------------------------------------------------|---------|-------------------------------------------------------------------------------------------------|
 | 1 | Media Viewer: swipeable image/video/audio playback for all media in a device group by folder           | ✅ Done  | HorizontalPager with ExoPlayer; images display, videos play with controls, audio plays with UI  |
 | 2 | Type-isolated swiping: images+videos grouped together, audio separate; loop swiping for visual media   | ✅ Done  | Auto-detects file type; images & videos swipe together with infinite loop; audio stays isolated |
-| 3 | PDF opens within app only . no external PDF file viewer.                                               | Pending | Deferred to future — requires in-app PDF viewer implementation first (see Documents #2)         |
 | 4 | Open single PDF only: no horizontal swipe through all PDF files in same folder                         | pending | Implement via `EXTRA_SINGLE_FILE_MODE` in `MediaViewerActivity`                                 |
 | 5 | Toggle immersive view activity must allow users to toggle complete immersive view if touched on screen | ✅ Done  | Tap toggles top bar + system bars; animated slide/fade; restores on exit                        |
 
@@ -50,40 +49,34 @@
 
 ## Music Player and Video Player
 
-| #   | Feature                                                                                                                                   | Status      | Notes                                                                       |
-|-----|-------------------------------------------------------------------------------------------------------------------------------------------|-------------|-----------------------------------------------------------------------------|
-| 2   | Music play in background even after app is closed                                                                                         | ✅ Done      | Service keeps playing on dispose; state hoisting ensures UI syncs on return |
-| 3   | Music play screen: add controls like repeat song, repeat entire folder audio files, shuffle, and seek bar                                 | Pending     |                                                                             |
-| 4   | Music play screen: show song title, artist name, and album name                                                                           | Pending     |                                                                             |
-| 5   | Music play screen: add play/pause, next, and previous buttons                                                                             | Pending     |                                                                             |
-| 6   | Music play notification with playback controls                                                                                            | ✅ Done      | Media3 MediaSessionService with auto notification; play/pause/seek controls |
-| 7   | Music play screen: show song art image with images' width wrap left right and height wrap content                                         | in progress |                                                                             |
-| 8   | If no song art image then show default music icon with same width and height as mentioned above                                           | Pending     |                                                                             |
-| 1   | Videos screen (group by folder)                                                                                                           | Pending     |                                                                             |
-| 2   | Gesture controls for brightness and volume                                                                                                | Pending     |                                                                             |
-| 3   | Double tap to seek forward/backward                                                                                                       | Pending     |                                                                             |
-| 4   | Aspect ratio toggle (Fit, Fill, Stretch, 16:9, 4:3)                                                                                       | Pending     |                                                                             |
-| 5   | Subtitle support (SRT, VTT) and audio track selection                                                                                     | Pending     |                                                                             |
-| 6   | Playback speed control (0.5x to 2.0x)                                                                                                     | Pending     |                                                                             |
-| 7   | Picture-in-Picture (PiP) mode                                                                                                             | Pending     |                                                                             |
-| 8   | Screen lock to prevent accidental touches                                                                                                 | Pending     |                                                                             |
-| 9   | Background play (audio only) toggle                                                                                                       | Pending     |                                                                             |
-| 10  | Enable/disable left/right swiping between all video files in that folder                                                                  | Pending     |                                                                             |
-| 11  | Long press to play video in 1.5x speed; release to restore speed                                                                          | Pending     |                                                                             |
-| 12  | Double tap left/right half of screen to rewind/forward 10 seconds                                                                         | Pending     |                                                                             |
-| 13a | Save all video files ONLY played position history. everytime i am opening video it resumes                                                | Pending     |                             
-| 13b | from earlier played position. Applicable inside file explorer as well as all files screen video launch and image+video swipe based UI too | Pending     |                                                                             |
+| #  | Feature                                                                                                      | Status  | Notes                                                                       |
+|----|--------------------------------------------------------------------------------------------------------------|---------|-----------------------------------------------------------------------------|
+| 2  | Music play in background even after app is closed                                                            | ✅ Done  | Service keeps playing on dispose; state hoisting ensures UI syncs on return |
+| 3  | Music play screen: add controls like repeat song, repeat entire folder audio files, shuffle, and seek bar    | Pending |                                                                             |
+| 4  | Music play screen: show song title, artist name, and album name                                              | Pending |                                                                             |
+| 5  | Music play screen: add play/pause, next, and previous buttons                                                | Pending |                                                                             |
+| 6  | Music play notification with playback controls                                                               | ✅ Done  | Media3 MediaSessionService with auto notification; play/pause/seek controls |
+| 7  | Music play screen: show song art image with images' width wrap left right and height wrap content            | ✅ Done  |                                                                             |
+| 8  | If no song art image then show default music icon with same width and height as mentioned above              | ✅ Done  |                                                                             |
+| 2  | Gesture controls for brightness and volume                                                                   | Pending |                                                                             |
+| 3  | Double tap to seek forward/backward                                                                          | Pending |                                                                             |
+| 4  | Aspect ratio toggle (Fit, Fill, Stretch, 16:9, 4:3)                                                          | Pending |                                                                             |
+| 5  | Subtitle support (SRT, VTT) and audio track selection                                                        | Pending |                                                                             |
+| 6  | Playback speed control (0.5x to 2.0x)                                                                        | Pending |                                                                             |
+| 7  | Picture-in-Picture (PiP) mode                                                                                | Pending |                                                                             |
+| 8  | Screen lock to prevent accidental touches                                                                    | Pending |                                                                             |
+| 9  | videos Background play toggle                                                                                | Pending |                                                                             |
+| 11 | Long press to play video in 1.5x speed; release to restore speed                                             | Pending |                                                                             |
+| 12 | Double tap left/right half of screen to rewind/forward 10 seconds                                            | Pending |                                                                             |
+| 13 | Save ONLY video files' playback position. everytime i am opening video it resumes from last played duration. | pending |                                                                             |
+| 13 | Applicable inside file explorer as well as all files screen video launch and image+video swipe based UI too  | Pending |                                                                             |
 
-
-## Documents
+## Documents (Targeting PDF as of now)
 
 | #  | Feature                                              | Status  | Notes |
 |----|------------------------------------------------------|---------|-------|
 | 1  | Documents screen (group by folder)                   | Pending |       |
 | 2  | In-app PDF viewer with zoom and page navigation      | Pending |       |
-| 3  | Text file editor (Open, Edit, Save .txt, .log, .md)  | Pending |       |
-| 4  | Document search by content (OCR or text indexing)    | Pending |       |
-| 5  | Print document via Google Cloud Print / System Print | Pending |       |
 
 ## Applications
 
@@ -108,17 +101,13 @@
 
 ## Settings & System
 
-| # | Feature                                              | Status  | Notes                                                                                                                                 |
-|---|------------------------------------------------------|---------|---------------------------------------------------------------------------------------------------------------------------------------|
-| 1 | Home screen with category cards                      | ✅ Done  | Replace into settings page later                                                                                                      |
-| 2 | Dark/Light theme toggle                              | ✅ Done  | Three-way segmented button in Settings: System / Light / Dark; persisted to SharedPreferences; applies instantly across the whole app |
-| 3 | Settings screen                                      | ✅ Done  | Accessible from Home; manages master password toggle                                                                                  |
-| 4 | Camera button directly from app                      | Pending |                                                                                                                                       |
-| 5 | Cloud storage integration (Google Drive, Dropbox)    | Pending |                                                                                                                                       |
-| 6 | Video background play flag/toggle in settings screen | Pending |     
-
-## uncategorized features
-Camera button directly from app
+| # | Feature                                                                                                                                 | Status  | Notes                                                                                                                                 |
+|---|-----------------------------------------------------------------------------------------------------------------------------------------|---------|---------------------------------------------------------------------------------------------------------------------------------------|
+| 1 | Home screen with category cards                                                                                                         | ✅ Done  | Replace into settings page later                                                                                                      |
+| 2 | Dark/Light theme toggle                                                                                                                 | ✅ Done  | Three-way segmented button in Settings: System / Light / Dark; persisted to SharedPreferences; applies instantly across the whole app |
+| 3 | Settings screen                                                                                                                         | ✅ Done  | Accessible from Home; manages master password toggle                                                                                  |
+| 4 | Camera button directly from app                                                                                                         | Pending |                                                                                                                                       |
+| 5 | Cloud storage integration (Google Drive and Mega) . Local internal storage to Google Drive storage file cut copy paste MUST BE POSSIBLE | Pending |                                                                                                                                       |
 
 ## Issues observed
 | #  | Issue                                                                                | Status        | Resolution                                                                                  |

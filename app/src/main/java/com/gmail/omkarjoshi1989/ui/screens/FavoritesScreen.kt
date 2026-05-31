@@ -52,6 +52,7 @@ import androidx.compose.ui.unit.dp
 import com.gmail.omkarjoshi1989.ui.components.FileThumbnail
 import com.gmail.omkarjoshi1989.util.FavoritesManager
 import com.gmail.omkarjoshi1989.util.FileUtils
+import com.gmail.omkarjoshi1989.util.RecycleBinManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -251,29 +252,35 @@ fun FavoritesScreen(
     if (showDeleteDialog && selectedFile != null) {
         AlertDialog(
             onDismissRequest = { showDeleteDialog = false; selectedFile = null },
-            title = { Text("Delete") },
+            title = { Text("Move to Recycle Bin") },
             text = {
-                Text("Are you sure you want to delete \"${selectedFile!!.name}\"? This cannot be undone.")
+                Text(
+                    "Move \"${selectedFile!!.name}\" to the Recycle Bin?\n\n" +
+                    "You can restore it later from the Recycle Bin."
+                )
             },
             confirmButton = {
                 TextButton(onClick = {
                     val file = selectedFile!!
                     scope.launch {
                         try {
-                            withContext(Dispatchers.IO) {
-                                val success = file.delete()
-                                if (!success) throw IllegalStateException("Delete failed")
+                            val success = withContext(Dispatchers.IO) {
+                                RecycleBinManager.moveToRecycleBin(context, file)
                             }
-                            // Remove from favorites
-                            FavoritesManager.removeFavorite(context, file.absolutePath)
-                            favoritePaths = FavoritesManager.getFavorites(context)
-                            snackbarHostState.showSnackbar("Deleted: ${file.name}")
+                            if (success) {
+                                // Remove from favorites
+                                FavoritesManager.removeFavorite(context, file.absolutePath)
+                                favoritePaths = FavoritesManager.getFavorites(context)
+                                snackbarHostState.showSnackbar("Moved to Recycle Bin: ${file.name}")
+                            } else {
+                                snackbarHostState.showSnackbar("Move to Recycle Bin failed")
+                            }
                         } catch (e: Exception) {
                             snackbarHostState.showSnackbar("Delete failed: ${e.message}")
                         }
                     }
                     showDeleteDialog = false; selectedFile = null
-                }) { Text("Delete", color = MaterialTheme.colorScheme.error) }
+                }) { Text("Move to Bin", color = MaterialTheme.colorScheme.error) }
             },
             dismissButton = {
                 TextButton(onClick = { showDeleteDialog = false; selectedFile = null }) { Text("Cancel") }

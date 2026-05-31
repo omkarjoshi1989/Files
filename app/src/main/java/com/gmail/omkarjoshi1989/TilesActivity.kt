@@ -40,6 +40,7 @@ import com.gmail.omkarjoshi1989.ui.screens.ApplicationsScreen
 import com.gmail.omkarjoshi1989.ui.screens.FavoritesScreen
 import com.gmail.omkarjoshi1989.ui.screens.FileExplorerScreen
 import com.gmail.omkarjoshi1989.ui.screens.PinLockScreen
+import com.gmail.omkarjoshi1989.ui.screens.RecycleBinScreen
 import com.gmail.omkarjoshi1989.ui.screens.RecentFilesScreen
 import com.gmail.omkarjoshi1989.ui.screens.SettingsScreen
 import com.gmail.omkarjoshi1989.ui.screens.ZipViewerScreen
@@ -52,7 +53,7 @@ import com.gmail.omkarjoshi1989.viewmodel.RecentFilesViewModel
 import com.gmail.omkarjoshi1989.viewmodel.ZipViewModel
 
 enum class Screen {
-    FILE_EXPLORER, RECENT_FILES, FAVORITES, APPLICATIONS, SETTINGS, ZIP_VIEWER
+    FILE_EXPLORER, RECENT_FILES, FAVORITES, APPLICATIONS, SETTINGS, ZIP_VIEWER, RECYCLE_BIN
 }
 
 class TilesActivity : ComponentActivity() {
@@ -131,6 +132,7 @@ class TilesActivity : ComponentActivity() {
                                 onNavigateToFavorites = { currentScreen = Screen.FAVORITES },
                                 onNavigateToApplications = { currentScreen = Screen.APPLICATIONS },
                                 onNavigateToSettings = { currentScreen = Screen.SETTINGS },
+                                onNavigateToRecycleBin = { currentScreen = Screen.RECYCLE_BIN },
                                 onShowToast = { msg -> Toast.makeText(this, msg, Toast.LENGTH_SHORT).show() }
                             )
                         }
@@ -180,6 +182,12 @@ class TilesActivity : ComponentActivity() {
                                         currentScreen = Screen.FILE_EXPLORER
                                     }
                                 }
+                            )
+                        }
+                        Screen.RECYCLE_BIN -> {
+                            BackHandler { currentScreen = Screen.FILE_EXPLORER }
+                            RecycleBinScreen(
+                                onNavigateBack = { currentScreen = Screen.FILE_EXPLORER }
                             )
                         }
                     }

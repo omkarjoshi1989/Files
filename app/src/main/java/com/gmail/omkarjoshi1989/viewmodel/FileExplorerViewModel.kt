@@ -12,6 +12,7 @@ import android.webkit.MimeTypeMap
 import androidx.core.content.FileProvider
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.gmail.omkarjoshi1989.util.RecycleBinManager
 import com.gmail.omkarjoshi1989.util.SettingsManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -335,31 +336,34 @@ class FileExplorerViewModel(application: Application) : AndroidViewModel(applica
 
     // ── Batch clipboard (selection mode) ──────────────────────────────────────
 
-    fun cutSelected() {
-        val files = selectedFiles()
+    /**
+     * Cuts the given [files] list into the clipboard.
+     * The Screen passes its own local selectedPaths — ViewModel's internal
+     * _selectionState is intentionally NOT used for this path.
+     */
+    fun cutSelected(files: List<File>) {
+        if (files.isEmpty()) return
         _clipboard.value = ClipboardData(files, ClipboardOperation.CUT)
         _operationMessage.value = if (files.size == 1) "Cut: ${files[0].name}" else "Cut ${files.size} items"
-        clearSelection()
     }
 
-    fun copySelected() {
-        val files = selectedFiles()
+    /** Copies the given [files] list into the clipboard. */
+    fun copySelected(files: List<File>) {
+        if (files.isEmpty()) return
         _clipboard.value = ClipboardData(files, ClipboardOperation.COPY)
         _operationMessage.value = if (files.size == 1) "Copied: ${files[0].name}" else "Copied ${files.size} items"
-        clearSelection()
     }
 
     fun deleteSelected() {
         val files = selectedFiles()
+        val context = getApplication<Application>()
         viewModelScope.launch {
             _isLoading.value = true
             try {
                 withContext(Dispatchers.IO) {
-                    files.forEach { file ->
-                        if (file.isDirectory) file.deleteRecursively() else file.delete()
-                    }
+                    files.forEach { file -> RecycleBinManager.moveToRecycleBin(context, file) }
                 }
-                _operationMessage.value = "Deleted ${files.size} item(s)"
+                _operationMessage.value = "Moved ${files.size} item(s) to Recycle Bin"
                 clearSelection()
                 refreshFiles()
             } catch (e: Exception) {
@@ -434,14 +438,15 @@ class FileExplorerViewModel(application: Application) : AndroidViewModel(applica
     }
 
     fun deleteFile(file: File) {
+        val context = getApplication<Application>()
         viewModelScope.launch {
             _isLoading.value = true
             try {
                 withContext(Dispatchers.IO) {
-                    val success = if (file.isDirectory) file.deleteRecursively() else file.delete()
-                    if (!success) throw IllegalStateException("Delete failed")
+                    val success = RecycleBinManager.moveToRecycleBin(context, file)
+                    if (!success) throw IllegalStateException("Move to Recycle Bin failed")
                 }
-                _operationMessage.value = "Deleted: ${file.name}"
+                _operationMessage.value = "Moved to Recycle Bin: ${file.name}"
                 refreshFiles()
             } catch (e: Exception) {
                 _errorMessage.value = "Delete failed: ${e.message}"
@@ -569,6 +574,7 @@ class FileExplorerViewModel(application: Application) : AndroidViewModel(applica
 
     fun clearError() { _errorMessage.value = null }
     fun clearOperationMessage() { _operationMessage.value = null }
+    fun clearClipboard() { _clipboard.value = null }
 
     private fun refreshFiles() {
         _fileListTrigger.value = System.currentTimeMillis()

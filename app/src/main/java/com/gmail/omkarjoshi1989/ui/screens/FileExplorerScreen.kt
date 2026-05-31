@@ -33,20 +33,29 @@ import androidx.compose.material.icons.filled.Sort
 import androidx.compose.material.icons.filled.AccessTime
 import androidx.compose.material.icons.filled.Archive
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.ContentCut
+import androidx.compose.material.icons.filled.ContentPaste
 import androidx.compose.material.icons.filled.CreateNewFolder
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.DeleteSweep
 import androidx.compose.material.icons.filled.DriveFileRenameOutline
+import androidx.compose.material.icons.filled.FolderZip
 import androidx.compose.material.icons.filled.NoteAdd
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.StarBorder
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.BottomAppBar
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ExtendedFloatingActionButton
+import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
@@ -75,6 +84,7 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
@@ -83,6 +93,7 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.gmail.omkarjoshi1989.ui.components.FileThumbnail
 import com.gmail.omkarjoshi1989.util.FavoritesManager
 import com.gmail.omkarjoshi1989.util.FileUtils
+import com.gmail.omkarjoshi1989.viewmodel.ClipboardOperation
 import com.gmail.omkarjoshi1989.viewmodel.FileSortOption
 import com.gmail.omkarjoshi1989.viewmodel.FileExplorerViewModel
 import java.io.File
@@ -98,6 +109,7 @@ fun FileExplorerScreen(
     onNavigateToFavorites: () -> Unit,
     onNavigateToApplications: () -> Unit,
     onNavigateToSettings: () -> Unit,
+    onNavigateToRecycleBin: () -> Unit,
     onShowToast: (String) -> Unit
 ) {
     val context = LocalContext.current
@@ -106,8 +118,15 @@ fun FileExplorerScreen(
 
     var favoritePaths by remember { mutableStateOf(FavoritesManager.getFavorites(context)) }
 
+    // selectedFile  → file whose bottom-sheet is currently open (single-file ops)
     var selectedFile by remember { mutableStateOf<File?>(null) }
+    // selectedPaths → multi-select set (drives selection mode when non-empty)
+    var selectedPaths by remember { mutableStateOf(setOf<String>()) }
+    val isSelectionMode = selectedPaths.isNotEmpty()
+
     var showBottomSheet by remember { mutableStateOf(false) }
+    var showZipDialog by remember { mutableStateOf(false) }
+    var zipName by remember { mutableStateOf("") }
     var showRenameDialog by remember { mutableStateOf(false) }
     var showDeleteDialog by remember { mutableStateOf(false) }
     var renameText by remember { mutableStateOf("") }
@@ -117,42 +136,162 @@ fun FileExplorerScreen(
     var showCreateFileDialog by remember { mutableStateOf(false) }
     var createName by remember { mutableStateOf("") }
 
-    // Show error messages via snackbar
+    // Converts selectedPaths to File list (used for batch clipboard ops)
+    fun selectedFiles(): List<File> = selectedPaths.map { File(it) }
+
     LaunchedEffect(uiState.errorMessage) {
-        uiState.errorMessage?.let {
-            snackbarHostState.showSnackbar(it)
-            viewModel.clearError()
-        }
+        uiState.errorMessage?.let { snackbarHostState.showSnackbar(it); viewModel.clearError() }
     }
-
-    // Show operation messages via snackbar
     LaunchedEffect(uiState.operationMessage) {
-        uiState.operationMessage?.let {
-            snackbarHostState.showSnackbar(it)
-            viewModel.clearOperationMessage()
-        }
+        uiState.operationMessage?.let { snackbarHostState.showSnackbar(it); viewModel.clearOperationMessage() }
     }
 
-    // Refresh favorites + files when returning to this screen
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
-        val observer = LifecycleEventObserver { _, event ->
+        val obs = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
                 viewModel.refresh()
                 favoritePaths = FavoritesManager.getFavorites(context)
             }
         }
-        lifecycleOwner.lifecycle.addObserver(observer)
-        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+        lifecycleOwner.lifecycle.addObserver(obs)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(obs) }
     }
 
     Scaffold(
         snackbarHost = { SnackbarHost(snackbarHostState) },
+
+        // ── Paste FAB (always shown when clipboard has files) ─────────────────
+        floatingActionButton = {
+            val clipData = uiState.clipboard
+            if (clipData != null && !isSelectionMode) {
+                Column(horizontalAlignment = Alignment.End) {
+                    FloatingActionButton(
+                        onClick = { viewModel.clearClipboard() },
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant
+                    ) {
+                        Icon(Icons.Filled.Close, contentDescription = "Cancel clipboard")
+                    }
+                    Spacer(modifier = Modifier.height(12.dp))
+                    ExtendedFloatingActionButton(
+                        onClick = { viewModel.paste() },
+                        icon = { Icon(Icons.Filled.ContentPaste, contentDescription = null) },
+                        text = {
+                            val isMove = clipData.operation == ClipboardOperation.CUT
+                            val base = if (isMove) "Move here" else "Paste here"
+                            val count = clipData.files.size
+                            Text(if (count == 1) "$base — ${clipData.files[0].name}" else "$base ($count items)")
+                        }
+                    )
+                }
+            }
+        },
+
+        // ── Bottom bar: appears in selection mode with batch operations ────────
+        bottomBar = {
+            if (isSelectionMode) {
+                BottomAppBar(
+                    containerColor = MaterialTheme.colorScheme.primaryContainer,
+                    contentColor = MaterialTheme.colorScheme.onPrimaryContainer
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceEvenly,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        // Cut
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            modifier = Modifier
+                                .clickable {
+                                    viewModel.cutSelected(selectedFiles())
+                                    selectedPaths = emptySet()
+                                }
+                                .padding(8.dp)
+                        ) {
+                            Icon(Icons.Filled.ContentCut, contentDescription = "Cut")
+                            Text("Cut", style = MaterialTheme.typography.labelSmall)
+                        }
+                        // Copy
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            modifier = Modifier
+                                .clickable {
+                                    viewModel.copySelected(selectedFiles())
+                                    selectedPaths = emptySet()
+                                }
+                                .padding(8.dp)
+                        ) {
+                            Icon(Icons.Filled.ContentCopy, contentDescription = "Copy")
+                            Text("Copy", style = MaterialTheme.typography.labelSmall)
+                        }
+                        // Zip
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            modifier = Modifier
+                                .clickable {
+                                    zipName = if (selectedPaths.size == 1)
+                                        File(selectedPaths.first()).nameWithoutExtension
+                                    else "Archive"
+                                    showZipDialog = true
+                                }
+                                .padding(8.dp)
+                        ) {
+                            Icon(Icons.Filled.FolderZip, contentDescription = "Zip")
+                            Text("Zip", style = MaterialTheme.typography.labelSmall)
+                        }
+                        // Delete
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            modifier = Modifier
+                                .clickable { showDeleteDialog = true }
+                                .padding(8.dp)
+                        ) {
+                            Icon(Icons.Filled.Delete, contentDescription = "Delete", tint = MaterialTheme.colorScheme.error)
+                            Text("Delete", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error)
+                        }
+                        // Share
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            modifier = Modifier
+                                .clickable {
+                                    try {
+                                        val uris = ArrayList<android.net.Uri>()
+                                        selectedPaths.forEach { p ->
+                                            val f = File(p)
+                                            val uri = androidx.core.content.FileProvider.getUriForFile(
+                                                context, "${context.packageName}.fileprovider", f
+                                            )
+                                            uris.add(uri)
+                                        }
+                                        val shareIntent = android.content.Intent(android.content.Intent.ACTION_SEND_MULTIPLE).apply {
+                                            type = "*/*"
+                                            putParcelableArrayListExtra(android.content.Intent.EXTRA_STREAM, uris)
+                                            addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                        }
+                                        context.startActivity(android.content.Intent.createChooser(shareIntent, "Share files"))
+                                    } catch (e: Exception) {
+                                        onShowToast("Share failed: ${e.localizedMessage ?: e.message}")
+                                    }
+                                    selectedPaths = emptySet()
+                                }
+                                .padding(8.dp)
+                        ) {
+                            Icon(Icons.Filled.Share, contentDescription = "Share")
+                            Text("Share", style = MaterialTheme.typography.labelSmall)
+                        }
+                    }
+                }
+            }
+        },
+
         topBar = {
             Column {
                 TopAppBar(
                     title = {
-                        if (uiState.isSearchActive) {
+                        if (isSelectionMode) {
+                            Text("${selectedPaths.size} selected", fontWeight = FontWeight.Bold)
+                        } else if (uiState.isSearchActive) {
                             val focusRequester = remember { FocusRequester() }
                             LaunchedEffect(Unit) { focusRequester.requestFocus() }
                             BasicTextField(
@@ -162,10 +301,8 @@ fun FileExplorerScreen(
                                 textStyle = MaterialTheme.typography.bodyLarge.copy(
                                     color = MaterialTheme.colorScheme.onPrimaryContainer
                                 ),
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .focusRequester(focusRequester),
-                                decorationBox = { innerTextField ->
+                                modifier = Modifier.fillMaxWidth().focusRequester(focusRequester),
+                                decorationBox = { inner ->
                                     Box {
                                         if (uiState.searchQuery.isEmpty()) {
                                             Text(
@@ -174,7 +311,7 @@ fun FileExplorerScreen(
                                                 color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.5f)
                                             )
                                         }
-                                        innerTextField()
+                                        inner()
                                     }
                                 }
                             )
@@ -184,84 +321,127 @@ fun FileExplorerScreen(
                     },
                     navigationIcon = {
                         IconButton(onClick = {
-                            when {
+                            if (isSelectionMode) {
+                                selectedPaths = emptySet(); selectedFile = null
+                            } else when {
                                 uiState.isSearchActive -> viewModel.toggleSearch()
                                 !viewModel.navigateUp() -> onNavigateBack()
                             }
                         }) {
                             Icon(
-                                if (uiState.isSearchActive) Icons.Filled.Close
+                                if (isSelectionMode || uiState.isSearchActive) Icons.Filled.Close
                                 else Icons.AutoMirrored.Filled.ArrowBack,
-                                contentDescription = if (uiState.isSearchActive) "Close search" else "Back"
+                                contentDescription = "Back"
                             )
                         }
                     },
                     actions = {
-                        IconButton(onClick = { viewModel.toggleSearch() }) {
-                            Icon(Icons.Filled.Search, contentDescription = "Search")
-                        }
-                        IconButton(onClick = { showAddMenu = true }) {
-                            Icon(Icons.Filled.Add, contentDescription = "Create new")
-                        }
-                        DropdownMenu(
-                            expanded = showAddMenu,
-                            onDismissRequest = { showAddMenu = false }
-                        ) {
-                            DropdownMenuItem(
-                                text = { Text("New Folder") },
-                                onClick = { createName = ""; showCreateFolderDialog = true; showAddMenu = false },
-                                leadingIcon = { Icon(Icons.Filled.CreateNewFolder, contentDescription = null) }
-                            )
-                            DropdownMenuItem(
-                                text = { Text("New File") },
-                                onClick = { createName = ""; showCreateFileDialog = true; showAddMenu = false },
-                                leadingIcon = { Icon(Icons.Filled.NoteAdd, contentDescription = null) }
-                            )
-                        }
-                        IconButton(onClick = { showMoreMenu = true }) {
-                            Icon(Icons.Filled.MoreVert, contentDescription = "More options")
-                        }
-                        DropdownMenu(
-                            expanded = showMoreMenu,
-                            onDismissRequest = { showMoreMenu = false }
-                        ) {
-                            DropdownMenuItem(
-                                text = { Text("All Files") },
-                                onClick = { onNavigateToRecentFiles(); showMoreMenu = false },
-                                leadingIcon = { Icon(Icons.Filled.AccessTime, contentDescription = null) }
-                            )
-                            DropdownMenuItem(
-                                text = { Text("Favorites") },
-                                onClick = { onNavigateToFavorites(); showMoreMenu = false },
-                                leadingIcon = { Icon(Icons.Filled.Star, contentDescription = null) }
-                            )
-                            HorizontalDivider()
-                            FileSortOption.entries.forEach { option ->
+                        if (isSelectionMode) {
+                            // Select all toggle
+                            IconButton(onClick = {
+                                selectedPaths = if (selectedPaths.size < uiState.files.size)
+                                    uiState.files.map { it.absolutePath }.toSet()
+                                else emptySet()
+                            }) {
+                                Icon(Icons.Filled.Apps, contentDescription = "Select all")
+                            }
+                            // More options for selection mode
+                            IconButton(onClick = { showMoreMenu = true }) {
+                                Icon(Icons.Filled.MoreVert, contentDescription = "More")
+                            }
+                            DropdownMenu(expanded = showMoreMenu, onDismissRequest = { showMoreMenu = false }) {
+                                // Open bottom-sheet for single selected file
+                                if (selectedPaths.size == 1) {
+                                    DropdownMenuItem(
+                                        text = { Text("Options for this file") },
+                                        onClick = {
+                                            selectedFile = File(selectedPaths.first())
+                                            showBottomSheet = true
+                                            showMoreMenu = false
+                                        },
+                                        leadingIcon = { Icon(Icons.Filled.MoreVert, contentDescription = null) }
+                                    )
+                                    HorizontalDivider()
+                                }
                                 DropdownMenuItem(
-                                    text = { Text("Sort by ${option.label}") },
-                                    onClick = { viewModel.setSortOption(option); showMoreMenu = false },
-                                    leadingIcon = { Icon(Icons.Filled.Sort, contentDescription = null) },
-                                    trailingIcon = {
-                                        if (uiState.sortOption == option) Icon(
-                                            if (uiState.sortAscending) Icons.Filled.ArrowUpward else Icons.Filled.ArrowDownward,
-                                            contentDescription = null,
-                                            modifier = Modifier.size(16.dp)
-                                        )
-                                    }
+                                    text = { Text("Toggle Favorites") },
+                                    onClick = {
+                                        selectedPaths.forEach { path -> FavoritesManager.toggleFavorite(context, path) }
+                                        favoritePaths = FavoritesManager.getFavorites(context)
+                                        selectedPaths = emptySet()
+                                        showMoreMenu = false
+                                    },
+                                    leadingIcon = { Icon(Icons.Filled.Star, contentDescription = null) }
                                 )
                             }
-                            HorizontalDivider()
-                            DropdownMenuItem(
-                                text = { Text("Applications") },
-                                onClick = { onNavigateToApplications(); showMoreMenu = false },
-                                leadingIcon = { Icon(Icons.Filled.Apps, contentDescription = null) }
-                            )
-                            HorizontalDivider()
-                            DropdownMenuItem(
-                                text = { Text("Settings") },
-                                onClick = { onNavigateToSettings(); showMoreMenu = false },
-                                leadingIcon = { Icon(Icons.Filled.Settings, contentDescription = null) }
-                            )
+                        } else {
+                            // Normal mode actions
+                            IconButton(onClick = { viewModel.toggleSearch() }) {
+                                Icon(Icons.Filled.Search, contentDescription = "Search")
+                            }
+                            IconButton(onClick = { showAddMenu = true }) {
+                                Icon(Icons.Filled.Add, contentDescription = "Create new")
+                            }
+                            DropdownMenu(expanded = showAddMenu, onDismissRequest = { showAddMenu = false }) {
+                                DropdownMenuItem(
+                                    text = { Text("New Folder") },
+                                    onClick = { createName = ""; showCreateFolderDialog = true; showAddMenu = false },
+                                    leadingIcon = { Icon(Icons.Filled.CreateNewFolder, contentDescription = null) }
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("New File") },
+                                    onClick = { createName = ""; showCreateFileDialog = true; showAddMenu = false },
+                                    leadingIcon = { Icon(Icons.Filled.NoteAdd, contentDescription = null) }
+                                )
+                            }
+                            IconButton(onClick = { showMoreMenu = true }) {
+                                Icon(Icons.Filled.MoreVert, contentDescription = "More options")
+                            }
+                            DropdownMenu(expanded = showMoreMenu, onDismissRequest = { showMoreMenu = false }) {
+                                DropdownMenuItem(
+                                    text = { Text("All Files") },
+                                    onClick = { onNavigateToRecentFiles(); showMoreMenu = false },
+                                    leadingIcon = { Icon(Icons.Filled.AccessTime, contentDescription = null) }
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("Favorites") },
+                                    onClick = { onNavigateToFavorites(); showMoreMenu = false },
+                                    leadingIcon = { Icon(Icons.Filled.Star, contentDescription = null) }
+                                )
+                                HorizontalDivider()
+                                FileSortOption.entries.forEach { option ->
+                                    DropdownMenuItem(
+                                        text = { Text("Sort by ${option.label}") },
+                                        onClick = { viewModel.setSortOption(option); showMoreMenu = false },
+                                        leadingIcon = { Icon(Icons.Filled.Sort, contentDescription = null) },
+                                        trailingIcon = {
+                                            if (uiState.sortOption == option) Icon(
+                                                if (uiState.sortAscending) Icons.Filled.ArrowUpward else Icons.Filled.ArrowDownward,
+                                                contentDescription = null,
+                                                modifier = Modifier.size(16.dp)
+                                            )
+                                        }
+                                    )
+                                }
+                                HorizontalDivider()
+                                DropdownMenuItem(
+                                    text = { Text("Applications") },
+                                    onClick = { onNavigateToApplications(); showMoreMenu = false },
+                                    leadingIcon = { Icon(Icons.Filled.Apps, contentDescription = null) }
+                                )
+                                HorizontalDivider()
+                                DropdownMenuItem(
+                                    text = { Text("Recycle Bin") },
+                                    onClick = { onNavigateToRecycleBin(); showMoreMenu = false },
+                                    leadingIcon = { Icon(Icons.Filled.DeleteSweep, contentDescription = null) }
+                                )
+                                HorizontalDivider()
+                                DropdownMenuItem(
+                                    text = { Text("Settings") },
+                                    onClick = { onNavigateToSettings(); showMoreMenu = false },
+                                    leadingIcon = { Icon(Icons.Filled.Settings, contentDescription = null) }
+                                )
+                            }
                         }
                     },
                     colors = TopAppBarDefaults.topAppBarColors(
@@ -269,10 +449,9 @@ fun FileExplorerScreen(
                         titleContentColor = MaterialTheme.colorScheme.onPrimaryContainer
                     )
                 )
-                // Breadcrumb path bar
                 BreadcrumbBar(
                     currentPath = uiState.currentPath,
-                    onPathClick = { viewModel.navigateTo(it) }
+                    onPathClick = { selectedPaths = emptySet(); viewModel.navigateTo(it) }
                 )
             }
         }
@@ -280,13 +459,9 @@ fun FileExplorerScreen(
         PullToRefreshBox(
             isRefreshing = uiState.isRefreshing,
             onRefresh = { viewModel.refresh() },
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(innerPadding)
+            modifier = Modifier.fillMaxSize().padding(innerPadding)
         ) {
-            if (uiState.isLoading) {
-                CircularProgressIndicator(modifier = Modifier.align(Alignment.Center))
-            }
+            if (uiState.isLoading) CircularProgressIndicator(modifier = Modifier.align(Alignment.Center))
 
             if (uiState.files.isEmpty() && !uiState.isLoading) {
                 Text(
@@ -299,20 +474,34 @@ fun FileExplorerScreen(
 
             LazyColumn(modifier = Modifier.fillMaxSize()) {
                 items(uiState.files, key = { it.absolutePath }) { file ->
+                    val isSelected = file.absolutePath in selectedPaths
                     FileListItem(
                         file = file,
                         viewModel = viewModel,
                         isFavorite = file.absolutePath in favoritePaths,
+                        isSelectionMode = isSelectionMode,
+                        isSelected = isSelected,
+                        onSelectionToggle = {
+                            selectedPaths = if (isSelected)
+                                selectedPaths - file.absolutePath
+                            else
+                                selectedPaths + file.absolutePath
+                        },
                         onClick = {
-                            if (file.isDirectory) {
-                                viewModel.navigateTo(file.absolutePath)
+                            if (isSelectionMode) {
+                                // In selection mode: tap toggles selection
+                                selectedPaths = if (isSelected)
+                                    selectedPaths - file.absolutePath
+                                else
+                                    selectedPaths + file.absolutePath
                             } else {
-                                onOpenFile(file)
+                                if (file.isDirectory) viewModel.navigateTo(file.absolutePath)
+                                else onOpenFile(file)
                             }
                         },
                         onLongClick = {
-                            selectedFile = file
-                            showBottomSheet = true
+                            // Long-press ALWAYS enters / extends selection mode
+                            selectedPaths = selectedPaths + file.absolutePath
                         }
                     )
                 }
@@ -320,40 +509,49 @@ fun FileExplorerScreen(
         }
     }
 
-    // ── Bottom sheet ──────────────────────────────────────────────────────────
+    // ── Single-file bottom sheet (long-press in selection mode ⋮ → Options) ───
     if (showBottomSheet && selectedFile != null) {
+        val sheetFile = selectedFile!!
         val sheetState = rememberModalBottomSheetState()
         ModalBottomSheet(
             onDismissRequest = { showBottomSheet = false; selectedFile = null },
             sheetState = sheetState
         ) {
             FileOperationsSheet(
-                file = selectedFile!!,
-                isFavorite = selectedFile!!.absolutePath in favoritePaths,
-                onToggleFavorite = {
-                    FavoritesManager.toggleFavorite(context, selectedFile!!.absolutePath)
-                    favoritePaths = FavoritesManager.getFavorites(context)
-                    showBottomSheet = false
-                    selectedFile = null
+                file = sheetFile,
+                isFavorite = sheetFile.absolutePath in favoritePaths,
+                onCut = {
+                    viewModel.cutFile(sheetFile)
+                    showBottomSheet = false; selectedFile = null; selectedPaths = emptySet()
                 },
-                onRename = { renameText = selectedFile!!.name; showRenameDialog = true; showBottomSheet = false },
-                onDelete = { showDeleteDialog = true; showBottomSheet = false },
-                onUnzip = if (selectedFile!!.extension.equals("zip", ignoreCase = true)) {
-                    {
-                        viewModel.unzipFile(selectedFile!!)
-                        showBottomSheet = false
-                        selectedFile = null
-                    }
+                onCopy = {
+                    viewModel.copyFile(sheetFile)
+                    showBottomSheet = false; selectedFile = null; selectedPaths = emptySet()
+                },
+                onToggleFavorite = {
+                    FavoritesManager.toggleFavorite(context, sheetFile.absolutePath)
+                    favoritePaths = FavoritesManager.getFavorites(context)
+                    showBottomSheet = false; selectedFile = null
+                },
+                onRename = {
+                    renameText = sheetFile.name
+                    showRenameDialog = true
+                    showBottomSheet = false
+                },
+                onDelete = {
+                    showDeleteDialog = true
+                    showBottomSheet = false
+                },
+                onUnzip = if (sheetFile.extension.equals("zip", ignoreCase = true)) {
+                    { viewModel.unzipFile(sheetFile); showBottomSheet = false; selectedFile = null }
                 } else null,
                 onShare = {
                     try {
-                        val intent = FileUtils.getShareFileIntent(context, selectedFile!!)
-                        context.startActivity(intent)
+                        context.startActivity(FileUtils.getShareFileIntent(context, sheetFile))
                     } catch (e: Exception) {
-                        onShowToast("Unable to share this file")
+                        onShowToast("Unable to share: ${e.localizedMessage ?: e.message}")
                     }
-                    showBottomSheet = false
-                    selectedFile = null
+                    showBottomSheet = false; selectedFile = null
                 }
             )
         }
@@ -385,22 +583,69 @@ fun FileExplorerScreen(
         )
     }
 
-    // ── Delete dialog ─────────────────────────────────────────────────────────
-    if (showDeleteDialog && selectedFile != null) {
+    // ── Delete / Move-to-bin dialog ────────────────────────────────────────────
+    if (showDeleteDialog) {
+        val isMulti = selectedPaths.isNotEmpty()
+        val singleTarget = if (!isMulti) selectedFile else null
+        if (isMulti || singleTarget != null) {
+            AlertDialog(
+                onDismissRequest = { showDeleteDialog = false; if (!isMulti) selectedFile = null },
+                title = { Text("Move to Recycle Bin") },
+                text = {
+                    if (isMulti) {
+                        Text("Move ${selectedPaths.size} item(s) to the Recycle Bin?\n\nYou can restore them later.")
+                    } else {
+                        Text(
+                            "Move \"${singleTarget!!.name}\" to the Recycle Bin?" +
+                            (if (singleTarget.isDirectory) "\n\nAll contents inside will also be moved." else "") +
+                            "\n\nYou can restore it later."
+                        )
+                    }
+                },
+                confirmButton = {
+                    TextButton(onClick = {
+                        if (isMulti) {
+                            selectedPaths.forEach { path -> viewModel.deleteFile(File(path)) }
+                            selectedPaths = emptySet()
+                        } else {
+                            viewModel.deleteFile(singleTarget!!)
+                            selectedFile = null
+                        }
+                        showDeleteDialog = false
+                    }) { Text("Move to Bin", color = MaterialTheme.colorScheme.error) }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showDeleteDialog = false; if (!isMulti) selectedFile = null }) { Text("Cancel") }
+                }
+            )
+        }
+    }
+
+    // ── Zip name dialog ───────────────────────────────────────────────────────
+    if (showZipDialog) {
         AlertDialog(
-            onDismissRequest = { showDeleteDialog = false; selectedFile = null },
-            title = { Text("Delete") },
+            onDismissRequest = { showZipDialog = false },
+            title = { Text("Create ZIP Archive") },
             text = {
-                Text("Are you sure you want to delete \"${selectedFile!!.name}\"?${if (selectedFile!!.isDirectory) "\nThis will delete all contents inside." else ""}")
+                OutlinedTextField(
+                    value = zipName,
+                    onValueChange = { zipName = it },
+                    label = { Text("Archive name") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
             },
             confirmButton = {
                 TextButton(onClick = {
-                    viewModel.deleteFile(selectedFile!!)
-                    showDeleteDialog = false; selectedFile = null
-                }) { Text("Delete", color = MaterialTheme.colorScheme.error) }
+                    if (zipName.isNotBlank()) {
+                        viewModel.zipFiles(selectedFiles(), zipName)
+                        selectedPaths = emptySet()
+                    }
+                    showZipDialog = false
+                }) { Text("Create") }
             },
             dismissButton = {
-                TextButton(onClick = { showDeleteDialog = false; selectedFile = null }) { Text("Cancel") }
+                TextButton(onClick = { showZipDialog = false }) { Text("Cancel") }
             }
         )
     }
@@ -425,9 +670,7 @@ fun FileExplorerScreen(
                     showCreateFolderDialog = false
                 }) { Text("Create") }
             },
-            dismissButton = {
-                TextButton(onClick = { showCreateFolderDialog = false }) { Text("Cancel") }
-            }
+            dismissButton = { TextButton(onClick = { showCreateFolderDialog = false }) { Text("Cancel") } }
         )
     }
 
@@ -451,9 +694,7 @@ fun FileExplorerScreen(
                     showCreateFileDialog = false
                 }) { Text("Create") }
             },
-            dismissButton = {
-                TextButton(onClick = { showCreateFileDialog = false }) { Text("Cancel") }
-            }
+            dismissButton = { TextButton(onClick = { showCreateFileDialog = false }) { Text("Cancel") } }
         )
     }
 }
@@ -521,6 +762,9 @@ fun FileListItem(
     file: File,
     viewModel: FileExplorerViewModel,
     isFavorite: Boolean = false,
+    isSelectionMode: Boolean = false,
+    isSelected: Boolean = false,
+    onSelectionToggle: () -> Unit = {},
     onClick: () -> Unit,
     onLongClick: () -> Unit
 ) {
@@ -529,7 +773,7 @@ fun FileListItem(
         modifier = Modifier
             .fillMaxWidth()
             .alpha(if (isHidden) 0.5f else 1f)
-            .combinedClickable(onClick = onClick, onLongClick = onLongClick)
+            .combinedClickable(onClick = { if (isSelectionMode) onSelectionToggle() else onClick() }, onLongClick = onLongClick)
     ) {
         Row(
             modifier = Modifier
@@ -537,9 +781,13 @@ fun FileListItem(
                 .padding(horizontal = 16.dp, vertical = 12.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            FileThumbnail(file = file, size = 40.dp)
-
-            Spacer(modifier = Modifier.width(12.dp))
+            if (isSelectionMode) {
+                Checkbox(checked = isSelected, onCheckedChange = { onSelectionToggle() })
+                Spacer(modifier = Modifier.width(12.dp))
+            } else {
+                FileThumbnail(file = file, size = 40.dp)
+                Spacer(modifier = Modifier.width(12.dp))
+            }
 
             Column(modifier = Modifier.weight(1f)) {
                 Text(
@@ -575,8 +823,8 @@ fun FileListItem(
                 }
             }
 
-            // Star badge — visible when file is a favorite
-            if (isFavorite) {
+            // Star badge — visible when file is a favorite (only when not in selection mode)
+            if (!isSelectionMode && isFavorite) {
                 Icon(
                     Icons.Filled.Star,
                     contentDescription = "Favorite",
@@ -586,7 +834,7 @@ fun FileListItem(
             }
         }
         HorizontalDivider(
-            modifier = Modifier.padding(start = 68.dp),
+            modifier = Modifier.padding(start = if (isSelectionMode) 56.dp else 68.dp),
             color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
         )
     }
@@ -597,6 +845,8 @@ fun FileOperationsSheet(
     file: File,
     isFavorite: Boolean = false,
     onToggleFavorite: () -> Unit = {},
+    onCut: (() -> Unit)? = null,
+    onCopy: (() -> Unit)? = null,
     onRename: () -> Unit,
     onDelete: () -> Unit,
     onUnzip: (() -> Unit)? = null,
@@ -631,13 +881,22 @@ fun FileOperationsSheet(
             FileOperationItem(icon = Icons.Filled.Share, label = "Share", onClick = onShare)
             HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
         }
+        // Cut / Copy
+        if (onCut != null) {
+            FileOperationItem(icon = Icons.Filled.ContentCut, label = "Cut", onClick = onCut)
+            HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
+        }
+        if (onCopy != null) {
+            FileOperationItem(icon = Icons.Filled.ContentCopy, label = "Copy", onClick = onCopy)
+            HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
+        }
         FileOperationItem(icon = Icons.Filled.DriveFileRenameOutline, label = "Rename", onClick = onRename)
         if (onUnzip != null) {
             FileOperationItem(icon = Icons.Filled.Archive, label = "Unzip here", onClick = onUnzip)
         }
         FileOperationItem(
             icon = Icons.Filled.Delete,
-            label = "Delete",
+            label = "Move to Recycle Bin",
             onClick = onDelete,
             tint = MaterialTheme.colorScheme.error
         )
