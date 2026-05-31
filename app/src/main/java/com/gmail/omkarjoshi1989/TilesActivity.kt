@@ -36,6 +36,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.gmail.omkarjoshi1989.ui.screens.ApplicationsScreen
 import com.gmail.omkarjoshi1989.ui.screens.FavoritesScreen
 import com.gmail.omkarjoshi1989.ui.screens.FileExplorerScreen
 import com.gmail.omkarjoshi1989.ui.screens.PinLockScreen
@@ -51,7 +52,7 @@ import com.gmail.omkarjoshi1989.viewmodel.RecentFilesViewModel
 import com.gmail.omkarjoshi1989.viewmodel.ZipViewModel
 
 enum class Screen {
-    FILE_EXPLORER, RECENT_FILES, FAVORITES, SETTINGS, ZIP_VIEWER
+    FILE_EXPLORER, RECENT_FILES, FAVORITES, APPLICATIONS, SETTINGS, ZIP_VIEWER
 }
 
 class TilesActivity : ComponentActivity() {
@@ -111,8 +112,11 @@ class TilesActivity : ComponentActivity() {
                         Screen.FILE_EXPLORER -> {
                             val fileViewModel: FileExplorerViewModel = viewModel()
                             BackHandler {
-                                if (!fileViewModel.navigateUp()) {
-                                    handleExitBackPress()
+                                val state = fileViewModel.uiState.value
+                                when {
+                                    state.isSearchActive -> fileViewModel.toggleSearch()
+                                    state.isSelectionMode -> fileViewModel.clearSelection()
+                                    !fileViewModel.navigateUp() -> handleExitBackPress()
                                 }
                             }
                             FileExplorerScreen(
@@ -125,6 +129,7 @@ class TilesActivity : ComponentActivity() {
                                 },
                                 onNavigateToRecentFiles = { currentScreen = Screen.RECENT_FILES },
                                 onNavigateToFavorites = { currentScreen = Screen.FAVORITES },
+                                onNavigateToApplications = { currentScreen = Screen.APPLICATIONS },
                                 onNavigateToSettings = { currentScreen = Screen.SETTINGS },
                                 onShowToast = { msg -> Toast.makeText(this, msg, Toast.LENGTH_SHORT).show() }
                             )
@@ -142,6 +147,12 @@ class TilesActivity : ComponentActivity() {
                             BackHandler { currentScreen = Screen.FILE_EXPLORER }
                             FavoritesScreen(
                                 onOpenFile = { file -> openFile(file) },
+                                onNavigateBack = { currentScreen = Screen.FILE_EXPLORER }
+                            )
+                        }
+                        Screen.APPLICATIONS -> {
+                            BackHandler { currentScreen = Screen.FILE_EXPLORER }
+                            ApplicationsScreen(
                                 onNavigateBack = { currentScreen = Screen.FILE_EXPLORER }
                             )
                         }

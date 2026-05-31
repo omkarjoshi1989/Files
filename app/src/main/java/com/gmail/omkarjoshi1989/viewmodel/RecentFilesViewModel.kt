@@ -39,7 +39,9 @@ data class RecentFilesUiState(
     val isSearchActive: Boolean = false,
     val sortOption: SortOption = SortOption.DATE,
     val sortAscending: Boolean = false,
-    val fileFilter: FileFilter = FileFilter.ALL
+    val fileFilter: FileFilter = FileFilter.ALL,
+    val operationMessage: String? = null,
+    val errorMessage: String? = null
 )
 
 class RecentFilesViewModel : ViewModel() {
@@ -102,6 +104,45 @@ class RecentFilesViewModel : ViewModel() {
         )
     }
 
+    fun clearOperationMessage() {
+        _uiState.value = _uiState.value.copy(operationMessage = null)
+    }
+
+    fun clearError() {
+        _uiState.value = _uiState.value.copy(errorMessage = null)
+    }
+
+    fun renameFile(file: File, newName: String) {
+        viewModelScope.launch {
+            try {
+                withContext(Dispatchers.IO) {
+                    val newFile = File(file.parent, newName)
+                    if (newFile.exists()) throw IllegalStateException("A file named '$newName' already exists")
+                    if (!file.renameTo(newFile)) throw IllegalStateException("Rename failed")
+                }
+                _uiState.value = _uiState.value.copy(operationMessage = "Renamed to: $newName")
+                refreshAndKeepState(newName)
+            } catch (e: Exception) {
+                _uiState.value = _uiState.value.copy(errorMessage = "Rename failed: ${e.message}")
+            }
+        }
+    }
+
+    fun deleteFile(file: File) {
+        viewModelScope.launch {
+            try {
+                withContext(Dispatchers.IO) {
+                    val success = if (file.isDirectory) file.deleteRecursively() else file.delete()
+                    if (!success) throw IllegalStateException("Delete failed")
+                }
+                _uiState.value = _uiState.value.copy(operationMessage = "Deleted: ${file.name}")
+                refresh()
+            } catch (e: Exception) {
+                _uiState.value = _uiState.value.copy(errorMessage = "Delete failed: ${e.message}")
+            }
+        }
+    }
+
     private fun applyFilter(files: List<File>, filter: FileFilter): List<File> = when (filter) {
         FileFilter.ALL -> files
         FileFilter.IMAGES -> files.filter { FileUtils.isImageFile(it) }
@@ -149,6 +190,28 @@ class RecentFilesViewModel : ViewModel() {
     }
 
     fun refresh() {
+        viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(isRefreshing = true)
+            try {
+                val files = withContext(Dispatchers.IO) {
+                    scanAllFiles(Environment.getExternalStorageDirectory())
+                }
+                val current = _uiState.value
+                val filtered = applyFilter(files, current.fileFilter)
+                    .let { if (current.searchQuery.isBlank()) it else it.filter { f -> f.name.contains(current.searchQuery, ignoreCase = true) } }
+                _uiState.value = current.copy(
+                    files = files,
+                    filteredFiles = applySorting(filtered, current.sortOption, current.sortAscending),
+                    isRefreshing = false,
+                    totalFilesScanned = files.size
+                )
+            } catch (e: Exception) {
+                _uiState.value = _uiState.value.copy(isRefreshing = false)
+            }
+        }
+    }
+
+    private fun refreshAndKeepState(renamedTo: String? = null) {
         viewModelScope.launch {
             _uiState.value = _uiState.value.copy(isRefreshing = true)
             try {

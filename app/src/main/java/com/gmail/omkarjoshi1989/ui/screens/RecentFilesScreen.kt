@@ -1,7 +1,8 @@
 package com.gmail.omkarjoshi1989.ui.screens
 
 import android.text.format.DateFormat
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -26,7 +27,9 @@ import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.VideoLibrary
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -35,13 +38,19 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TextField
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -56,10 +65,13 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
+import android.widget.Toast
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.gmail.omkarjoshi1989.ui.components.FileThumbnail
+import com.gmail.omkarjoshi1989.util.FavoritesManager
 import com.gmail.omkarjoshi1989.util.FileUtils
 import com.gmail.omkarjoshi1989.viewmodel.FileFilter
 import com.gmail.omkarjoshi1989.viewmodel.RecentFilesViewModel
@@ -67,18 +79,44 @@ import com.gmail.omkarjoshi1989.viewmodel.SortOption
 import java.io.File
 import java.util.Date
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun RecentFilesScreen(
     viewModel: RecentFilesViewModel,
     onOpenFile: (File) -> Unit,
     onNavigateBack: () -> Unit
 ) {
+    val context = LocalContext.current
     val uiState by viewModel.uiState.collectAsState()
+    val snackbarHostState = remember { SnackbarHostState() }
+
+    var favoritePaths by remember { mutableStateOf(FavoritesManager.getFavorites(context)) }
+    var selectedFile by remember { mutableStateOf<File?>(null) }
+    var showBottomSheet by remember { mutableStateOf(false) }
+    var showRenameDialog by remember { mutableStateOf(false) }
+    var showDeleteDialog by remember { mutableStateOf(false) }
+    var renameText by remember { mutableStateOf("") }
+
     var showSortMenu by remember { mutableStateOf(false) }
     var showFilterMenu by remember { mutableStateOf(false) }
 
+    // Show operation/error messages via snackbar
+    LaunchedEffect(uiState.operationMessage) {
+        uiState.operationMessage?.let {
+            snackbarHostState.showSnackbar(it)
+            viewModel.clearOperationMessage()
+            favoritePaths = FavoritesManager.getFavorites(context)
+        }
+    }
+    LaunchedEffect(uiState.errorMessage) {
+        uiState.errorMessage?.let {
+            snackbarHostState.showSnackbar(it)
+            viewModel.clearError()
+        }
+    }
+
     Scaffold(
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             TopAppBar(
                 title = {
@@ -103,17 +141,17 @@ fun RecentFilesScreen(
                         )
                     } else {
                         Column {
-                                Text("All Files", fontWeight = FontWeight.Bold)
-                                if (!uiState.isLoading) {
-                                    val filterLabel = if (uiState.fileFilter == FileFilter.ALL) ""
-                                                      else " • ${uiState.fileFilter.label}"
-                                    Text(
-                                        text = "${uiState.filteredFiles.size}/${uiState.totalFilesScanned} files • ${uiState.sortOption.label}$filterLabel",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
-                                    )
-                                }
+                            Text("All Files", fontWeight = FontWeight.Bold)
+                            if (!uiState.isLoading) {
+                                val filterLabel = if (uiState.fileFilter == FileFilter.ALL) ""
+                                                  else " • ${uiState.fileFilter.label}"
+                                Text(
+                                    text = "${uiState.filteredFiles.size}/${uiState.totalFilesScanned} files • ${uiState.sortOption.label}$filterLabel",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
+                                )
                             }
+                        }
                     }
                 },
                 navigationIcon = {
@@ -121,10 +159,7 @@ fun RecentFilesScreen(
                         if (uiState.isSearchActive) viewModel.toggleSearch()
                         else onNavigateBack()
                     }) {
-                        Icon(
-                            Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "Back"
-                        )
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
                     }
                 },
                 actions = {
@@ -279,26 +314,132 @@ fun RecentFilesScreen(
                     items(uiState.filteredFiles, key = { it.absolutePath }) { file ->
                         RecentFileItem(
                             file = file,
-                            onClick = { onOpenFile(file) }
+                            isFavorite = file.absolutePath in favoritePaths,
+                            onClick = { onOpenFile(file) },
+                            onLongClick = {
+                                selectedFile = file
+                                showBottomSheet = true
+                            }
                         )
                     }
                 }
             }
         }
     }
+
+    // ── Bottom sheet ──────────────────────────────────────────────────────────
+    if (showBottomSheet && selectedFile != null) {
+        val sheetState = rememberModalBottomSheetState()
+        ModalBottomSheet(
+            onDismissRequest = { showBottomSheet = false; selectedFile = null },
+            sheetState = sheetState
+        ) {
+            FileOperationsSheet(
+                file = selectedFile!!,
+                isFavorite = selectedFile!!.absolutePath in favoritePaths,
+                onToggleFavorite = {
+                    FavoritesManager.toggleFavorite(context, selectedFile!!.absolutePath)
+                    favoritePaths = FavoritesManager.getFavorites(context)
+                    showBottomSheet = false
+                    selectedFile = null
+                },
+                onRename = {
+                    renameText = selectedFile!!.name
+                    showRenameDialog = true
+                    showBottomSheet = false
+                },
+                onDelete = {
+                    showDeleteDialog = true
+                    showBottomSheet = false
+                },
+                onShare = {
+                    try {
+                        val intent = FileUtils.getShareFileIntent(context, selectedFile!!)
+                        context.startActivity(intent)
+                    } catch (e: Exception) {
+                        Toast.makeText(context, "Unable to share this file", Toast.LENGTH_SHORT).show()
+                    }
+                    showBottomSheet = false
+                    selectedFile = null
+                }
+            )
+        }
+    }
+
+    // ── Rename dialog ─────────────────────────────────────────────────────────
+    if (showRenameDialog && selectedFile != null) {
+        AlertDialog(
+            onDismissRequest = { showRenameDialog = false; selectedFile = null },
+            title = { Text("Rename") },
+            text = {
+                OutlinedTextField(
+                    value = renameText,
+                    onValueChange = { renameText = it },
+                    label = { Text("New name") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    if (renameText.isNotBlank()) {
+                        val oldPath = selectedFile!!.absolutePath
+                        // Update favorite path if this file is favorited
+                        if (oldPath in favoritePaths) {
+                            val newPath = "${selectedFile!!.parent}/$renameText"
+                            FavoritesManager.removeFavorite(context, oldPath)
+                            FavoritesManager.toggleFavorite(context, newPath)
+                            favoritePaths = FavoritesManager.getFavorites(context)
+                        }
+                        viewModel.renameFile(selectedFile!!, renameText)
+                    }
+                    showRenameDialog = false; selectedFile = null
+                }) { Text("Rename") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showRenameDialog = false; selectedFile = null }) { Text("Cancel") }
+            }
+        )
+    }
+
+    // ── Delete dialog ─────────────────────────────────────────────────────────
+    if (showDeleteDialog && selectedFile != null) {
+        AlertDialog(
+            onDismissRequest = { showDeleteDialog = false; selectedFile = null },
+            title = { Text("Delete") },
+            text = {
+                Text("Are you sure you want to delete \"${selectedFile!!.name}\"?")
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    // Remove from favorites if present
+                    FavoritesManager.removeFavorite(context, selectedFile!!.absolutePath)
+                    favoritePaths = FavoritesManager.getFavorites(context)
+                    viewModel.deleteFile(selectedFile!!)
+                    showDeleteDialog = false; selectedFile = null
+                }) { Text("Delete", color = MaterialTheme.colorScheme.error) }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDeleteDialog = false; selectedFile = null }) { Text("Cancel") }
+            }
+        )
+    }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun RecentFileItem(
     file: File,
-    onClick: () -> Unit
+    isFavorite: Boolean = false,
+    onClick: () -> Unit,
+    onLongClick: () -> Unit = {}
 ) {
     val isHidden = file.name.startsWith(".")
     Column(
         modifier = Modifier
             .fillMaxWidth()
             .alpha(if (isHidden) 0.5f else 1f)
-            .clickable(onClick = onClick)
+            .combinedClickable(onClick = onClick, onLongClick = onLongClick)
     ) {
         Row(
             modifier = Modifier
@@ -306,10 +447,7 @@ fun RecentFileItem(
                 .padding(horizontal = 16.dp, vertical = 12.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            FileThumbnail(
-                file = file,
-                size = 40.dp
-            )
+            FileThumbnail(file = file, size = 40.dp)
 
             Spacer(modifier = Modifier.width(12.dp))
 
@@ -330,23 +468,28 @@ fun RecentFileItem(
                     overflow = TextOverflow.Ellipsis
                 )
                 Spacer(modifier = Modifier.height(2.dp))
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     Text(
                         text = FileUtils.formatFileSize(file.length()),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     Text(
-                        text = DateFormat.format(
-                            "MMM dd, yyyy HH:mm:ss",
-                            Date(file.lastModified())
-                        ).toString(),
+                        text = DateFormat.format("MMM dd, yyyy HH:mm:ss", Date(file.lastModified())).toString(),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
+            }
+
+            // Star badge — visible when file is a favorite
+            if (isFavorite) {
+                Icon(
+                    Icons.Filled.Star,
+                    contentDescription = "Favorite",
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(20.dp)
+                )
             }
         }
         HorizontalDivider(

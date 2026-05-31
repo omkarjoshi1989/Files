@@ -104,4 +104,23 @@ object FileUtils {
         }
         return Intent.createChooser(intent, "Open with")
     }
+
+    /**
+     * Returns an intent chooser that can be used to share a single file with other apps.
+     * The file is exposed via FileProvider and a read permission flag is granted on the chooser.
+     */
+    fun getShareFileIntent(context: Context, file: File): Intent {
+        val uri: Uri = FileProvider.getUriForFile(
+            context,
+            "${context.packageName}.fileprovider",
+            file
+        )
+        val mimeType = getMimeType(file)
+        val intent = Intent(Intent.ACTION_SEND).apply {
+            type = mimeType
+            putExtra(Intent.EXTRA_STREAM, uri)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        return Intent.createChooser(intent, "Share file")
+    }
 }

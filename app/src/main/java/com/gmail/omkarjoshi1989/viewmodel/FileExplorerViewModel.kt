@@ -35,6 +35,10 @@ import java.util.zip.ZipOutputStream
 
 enum class ClipboardOperation { CUT, COPY }
 
+enum class FileSortOption(val label: String) {
+    NAME("Name"), DATE("Date Modified"), SIZE("Size"), TYPE("Type")
+}
+
 /** Holds one or many files queued for a cut/copy operation. */
 data class ClipboardData(
     val files: List<File>,
@@ -44,6 +48,19 @@ data class ClipboardData(
 private data class SelectionState(
     val isMode: Boolean = false,
     val paths: Set<String> = emptySet()
+)
+
+private data class SortState(
+    val option: FileSortOption = FileSortOption.NAME,
+    val ascending: Boolean = true
+)
+
+private data class NavState(
+    val path: String,
+    val showHidden: Boolean,
+    val searchQuery: String,
+    val isSearchActive: Boolean,
+    val sortState: SortState
 )
 
 data class FileExplorerUiState(
@@ -57,7 +74,11 @@ data class FileExplorerUiState(
     val operationMessage: String? = null,
     val folderSizes: Map<String, Long> = emptyMap(),
     val isSelectionMode: Boolean = false,
-    val selectedFilePaths: Set<String> = emptySet()
+    val selectedFilePaths: Set<String> = emptySet(),
+    val searchQuery: String = "",
+    val isSearchActive: Boolean = false,
+    val sortOption: FileSortOption = FileSortOption.NAME,
+    val sortAscending: Boolean = true
 )
 
 class FileExplorerViewModel(application: Application) : AndroidViewModel(application) {
@@ -72,6 +93,9 @@ class FileExplorerViewModel(application: Application) : AndroidViewModel(applica
     private val _fileListTrigger = MutableStateFlow(0L)
     private val _folderSizes = MutableStateFlow<Map<String, Long>>(emptyMap())
     private val _selectionState = MutableStateFlow(SelectionState())
+    private val _searchQuery = MutableStateFlow("")
+    private val _isSearchActive = MutableStateFlow(false)
+    private val _sortState = MutableStateFlow(SortState())
 
     private val prefListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
         if (key == "show_hidden_files") {
@@ -131,20 +155,21 @@ class FileExplorerViewModel(application: Application) : AndroidViewModel(applica
     }
 
     val uiState: StateFlow<FileExplorerUiState> = combine(
-        _currentPath,
-        _showHiddenFiles,
+        combine(_currentPath, _showHiddenFiles, _searchQuery, _isSearchActive, _sortState) { path, hidden, sq, searchActive, sort ->
+            NavState(path, hidden, sq, searchActive, sort)
+        },
         _clipboard,
         combine(_isLoading, _isRefreshing, _selectionState) { l, r, sel -> Triple(l, r, sel) },
         combine(_errorMessage, _operationMessage, _fileListTrigger, _folderSizes) { err, op, _, sizes -> Triple(err, op, sizes) }
-    ) { path, showHidden, clipboard, loadingSel, extras ->
+    ) { navState, clipboard, loadingSel, extras ->
         val (loading, refreshing, selState) = loadingSel
         val (error, opMsg, folderSizes) = extras
-        val dir = File(path)
-        val files = loadFiles(dir, showHidden)
+        val dir = File(navState.path)
+        val files = loadFiles(dir, navState.showHidden, navState.searchQuery, navState.sortState)
         FileExplorerUiState(
-            currentPath = path,
+            currentPath = navState.path,
             files = files,
-            showHiddenFiles = showHidden,
+            showHiddenFiles = navState.showHidden,
             clipboard = clipboard,
             isLoading = loading,
             isRefreshing = refreshing,
@@ -152,19 +177,46 @@ class FileExplorerViewModel(application: Application) : AndroidViewModel(applica
             operationMessage = opMsg,
             folderSizes = folderSizes,
             isSelectionMode = selState.isMode,
-            selectedFilePaths = selState.paths
+            selectedFilePaths = selState.paths,
+            searchQuery = navState.searchQuery,
+            isSearchActive = navState.isSearchActive,
+            sortOption = navState.sortState.option,
+            sortAscending = navState.sortState.ascending
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), FileExplorerUiState())
 
-    private fun loadFiles(directory: File, showHidden: Boolean): List<File> {
+    private fun loadFiles(directory: File, showHidden: Boolean, searchQuery: String = "", sortState: SortState = SortState()): List<File> {
         val allFiles = directory.listFiles() ?: return emptyList()
-        val filteredFiles = allFiles
-            .filter { showHidden || !it.isHidden }
-            .sortedWith(compareBy<File> { !it.isDirectory }.thenBy { it.name.lowercase() })
-        filteredFiles.filter { it.isDirectory }.forEach { folder ->
+        var result = allFiles.filter { showHidden || !it.isHidden }
+
+        // Apply search filter
+        if (searchQuery.isNotBlank()) {
+            result = result.filter { it.name.contains(searchQuery, ignoreCase = true) }
+        }
+
+        // Build comparator: folders always first, then sort within each group
+        val comparator: Comparator<File> = compareBy<File> { !it.isDirectory }.let { base ->
+            when (sortState.option) {
+                FileSortOption.NAME ->
+                    if (sortState.ascending) base.thenBy { it.name.lowercase() }
+                    else base.thenByDescending { it.name.lowercase() }
+                FileSortOption.DATE ->
+                    if (sortState.ascending) base.thenBy { it.lastModified() }
+                    else base.thenByDescending { it.lastModified() }
+                FileSortOption.SIZE ->
+                    if (sortState.ascending) base.thenBy { if (it.isDirectory) 0L else it.length() }
+                    else base.thenByDescending { if (it.isDirectory) 0L else it.length() }
+                FileSortOption.TYPE ->
+                    if (sortState.ascending) base.thenBy { it.extension.lowercase() }.thenBy { it.name.lowercase() }
+                    else base.thenByDescending { it.extension.lowercase() }.thenBy { it.name.lowercase() }
+            }
+        }
+
+        val filteredSorted = result.sortedWith(comparator)
+        filteredSorted.filter { it.isDirectory }.forEach { folder ->
             computeFolderSize(folder, showHidden)
         }
-        return filteredFiles
+        return filteredSorted
     }
 
     private fun computeFolderSize(folder: File, showHidden: Boolean) {
@@ -194,6 +246,8 @@ class FileExplorerViewModel(application: Application) : AndroidViewModel(applica
         val dir = File(path)
         if (dir.exists() && dir.isDirectory) {
             clearSelection()
+            _searchQuery.value = ""
+            _isSearchActive.value = false
             _currentPath.value = dir.absolutePath
             _errorMessage.value = null
         } else {
@@ -206,6 +260,8 @@ class FileExplorerViewModel(application: Application) : AndroidViewModel(applica
         val parent = current.parentFile
         return if (parent != null && parent.canRead()) {
             clearSelection()
+            _searchQuery.value = ""
+            _isSearchActive.value = false
             _currentPath.value = parent.absolutePath
             _errorMessage.value = null
             true
@@ -235,6 +291,34 @@ class FileExplorerViewModel(application: Application) : AndroidViewModel(applica
 
     fun clearSelection() {
         _selectionState.value = SelectionState()
+    }
+
+    // ── Search ────────────────────────────────────────────────────────────────
+
+    fun updateSearchQuery(query: String) {
+        _searchQuery.value = query
+    }
+
+    fun toggleSearch() {
+        if (_isSearchActive.value) {
+            _isSearchActive.value = false
+            _searchQuery.value = ""
+        } else {
+            _isSearchActive.value = true
+        }
+    }
+
+    // ── Sort ──────────────────────────────────────────────────────────────────
+
+    fun setSortOption(option: FileSortOption) {
+        val current = _sortState.value
+        val newAscending = if (current.option == option) !current.ascending else {
+            when (option) {
+                FileSortOption.NAME, FileSortOption.TYPE -> true
+                FileSortOption.DATE, FileSortOption.SIZE -> false
+            }
+        }
+        _sortState.value = SortState(option, newAscending)
     }
 
     // ── Single-file clipboard (bottom sheet) ──────────────────────────────────
