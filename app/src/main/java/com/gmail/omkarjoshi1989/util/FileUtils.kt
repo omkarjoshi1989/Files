@@ -28,6 +28,10 @@ object FileUtils {
     fun isVideoFile(file: File): Boolean = file.extension.lowercase() in videoExtensions
     fun isAudioFile(file: File): Boolean = file.extension.lowercase() in audioExtensions
 
+    fun isZipFile(file: File): Boolean = file.extension.lowercase() == "zip"
+
+    fun isPdfFile(file: File): Boolean = file.extension.lowercase() == "pdf"
+
     /** Returns true if the file is an image or video (visual media). */
     fun isVisualMediaFile(file: File): Boolean {
         val ext = file.extension.lowercase()

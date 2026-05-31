@@ -1,7 +1,9 @@
 package com.gmail.omkarjoshi1989
 
+import android.content.Context
 import android.content.Intent
 import android.content.ActivityNotFoundException
+import android.content.SharedPreferences
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -14,6 +16,7 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
@@ -33,20 +36,22 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.gmail.omkarjoshi1989.ui.screens.FavoritesScreen
 import com.gmail.omkarjoshi1989.ui.screens.FileExplorerScreen
-import com.gmail.omkarjoshi1989.ui.screens.HomeDestination
-import com.gmail.omkarjoshi1989.ui.screens.HomeScreen
 import com.gmail.omkarjoshi1989.ui.screens.PinLockScreen
 import com.gmail.omkarjoshi1989.ui.screens.RecentFilesScreen
 import com.gmail.omkarjoshi1989.ui.screens.SettingsScreen
+import com.gmail.omkarjoshi1989.ui.screens.ZipViewerScreen
 import com.gmail.omkarjoshi1989.ui.theme.FilesTheme
 import com.gmail.omkarjoshi1989.util.FileUtils
 import com.gmail.omkarjoshi1989.util.SettingsManager
+import com.gmail.omkarjoshi1989.util.ThemeMode
 import com.gmail.omkarjoshi1989.viewmodel.FileExplorerViewModel
 import com.gmail.omkarjoshi1989.viewmodel.RecentFilesViewModel
+import com.gmail.omkarjoshi1989.viewmodel.ZipViewModel
 
 enum class Screen {
-    HOME, FILE_EXPLORER, RECENT_FILES, SETTINGS
+    FILE_EXPLORER, RECENT_FILES, FAVORITES, SETTINGS, ZIP_VIEWER
 }
 
 class TilesActivity : ComponentActivity() {
@@ -54,7 +59,16 @@ class TilesActivity : ComponentActivity() {
     private var hasStoragePermission by mutableStateOf(false)
     private var isAuthenticated by mutableStateOf(false)
     private var masterPasswordEnabled by mutableStateOf(true)
-    private var currentScreen by mutableStateOf(Screen.HOME)
+    private var currentScreen by mutableStateOf(Screen.FILE_EXPLORER)
+    private var themeMode by mutableStateOf(ThemeMode.SYSTEM)
+    private var zipFileToView by mutableStateOf<java.io.File?>(null)
+
+    /** Timestamp of the last back-press when at the explorer root (for double-back-to-exit). */
+    private var lastBackPressTime = 0L
+
+    private val prefsListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
+        if (key == "theme_mode") themeMode = SettingsManager.getThemeMode(this)
+    }
 
     private val manageStorageLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
@@ -73,12 +87,20 @@ class TilesActivity : ComponentActivity() {
         enableEdgeToEdge()
         checkPermission()
         masterPasswordEnabled = SettingsManager.isMasterPasswordEnabled(this)
+        themeMode = SettingsManager.getThemeMode(this)
         if (!masterPasswordEnabled) {
             isAuthenticated = true
         }
+        getSharedPreferences("app_settings", Context.MODE_PRIVATE)
+            .registerOnSharedPreferenceChangeListener(prefsListener)
 
         setContent {
-            FilesTheme {
+            val isDark = when (themeMode) {
+                ThemeMode.SYSTEM -> isSystemInDarkTheme()
+                ThemeMode.LIGHT  -> false
+                ThemeMode.DARK   -> true
+            }
+            FilesTheme(darkTheme = isDark) {
                 if (!isAuthenticated) {
                     BackHandler { finish() }
                     PinLockScreen(
@@ -86,26 +108,11 @@ class TilesActivity : ComponentActivity() {
                     )
                 } else if (hasStoragePermission) {
                     when (currentScreen) {
-                        Screen.HOME -> {
-                            BackHandler { finish() }
-                            HomeScreen(
-                                onNavigate = { destination ->
-                                    when (destination) {
-                                        HomeDestination.FILE_EXPLORER -> currentScreen = Screen.FILE_EXPLORER
-                                        HomeDestination.RECENT_FILES -> currentScreen = Screen.RECENT_FILES
-                                        HomeDestination.SETTINGS -> currentScreen = Screen.SETTINGS
-                                        else -> {
-                                            Toast.makeText(this, "${destination.label} - Coming soon!", Toast.LENGTH_SHORT).show()
-                                        }
-                                    }
-                                }
-                            )
-                        }
                         Screen.FILE_EXPLORER -> {
                             val fileViewModel: FileExplorerViewModel = viewModel()
                             BackHandler {
                                 if (!fileViewModel.navigateUp()) {
-                                    currentScreen = Screen.HOME
+                                    handleExitBackPress()
                                 }
                             }
                             FileExplorerScreen(
@@ -113,27 +120,54 @@ class TilesActivity : ComponentActivity() {
                                 onOpenFile = { file -> openFile(file) },
                                 onNavigateBack = {
                                     if (!fileViewModel.navigateUp()) {
-                                        currentScreen = Screen.HOME
+                                        handleExitBackPress()
                                     }
-                                }
+                                },
+                                onNavigateToRecentFiles = { currentScreen = Screen.RECENT_FILES },
+                                onNavigateToFavorites = { currentScreen = Screen.FAVORITES },
+                                onNavigateToSettings = { currentScreen = Screen.SETTINGS },
+                                onShowToast = { msg -> Toast.makeText(this, msg, Toast.LENGTH_SHORT).show() }
                             )
                         }
                         Screen.RECENT_FILES -> {
                             val recentViewModel: RecentFilesViewModel = viewModel()
-                            BackHandler { currentScreen = Screen.HOME }
+                            BackHandler { currentScreen = Screen.FILE_EXPLORER }
                             RecentFilesScreen(
                                 viewModel = recentViewModel,
                                 onOpenFile = { file -> openFile(file) },
-                                onNavigateBack = { currentScreen = Screen.HOME }
+                                onNavigateBack = { currentScreen = Screen.FILE_EXPLORER }
+                            )
+                        }
+                        Screen.FAVORITES -> {
+                            BackHandler { currentScreen = Screen.FILE_EXPLORER }
+                            FavoritesScreen(
+                                onOpenFile = { file -> openFile(file) },
+                                onNavigateBack = { currentScreen = Screen.FILE_EXPLORER }
                             )
                         }
                         Screen.SETTINGS -> {
-                            BackHandler { currentScreen = Screen.HOME }
+                            BackHandler { currentScreen = Screen.FILE_EXPLORER }
                             SettingsScreen(
                                 onNavigateBack = {
-                                    // Re-read setting when leaving settings
                                     masterPasswordEnabled = SettingsManager.isMasterPasswordEnabled(this@TilesActivity)
-                                    currentScreen = Screen.HOME
+                                    currentScreen = Screen.FILE_EXPLORER
+                                }
+                            )
+                        }
+                        Screen.ZIP_VIEWER -> {
+                            val zipViewModel: ZipViewModel = viewModel()
+                            zipFileToView?.let { zipViewModel.loadZipFile(it) }
+                            BackHandler {
+                                if (!zipViewModel.navigateUp()) {
+                                    currentScreen = Screen.FILE_EXPLORER
+                                }
+                            }
+                            ZipViewerScreen(
+                                viewModel = zipViewModel,
+                                onNavigateBack = {
+                                    if (!zipViewModel.navigateUp()) {
+                                        currentScreen = Screen.FILE_EXPLORER
+                                    }
                                 }
                             )
                         }
@@ -145,6 +179,12 @@ class TilesActivity : ComponentActivity() {
                 }
             }
         }
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        getSharedPreferences("app_settings", Context.MODE_PRIVATE)
+            .unregisterOnSharedPreferenceChangeListener(prefsListener)
     }
 
     override fun onResume() {
@@ -201,11 +241,17 @@ class TilesActivity : ComponentActivity() {
     }
 
     private fun openFile(file: java.io.File) {
-        if (FileUtils.isMediaFile(file) && file.parentFile != null) {
-            // Open in built-in media viewer with swipeable pager
+        if (FileUtils.isZipFile(file)) {
+            zipFileToView = file
+            currentScreen = Screen.ZIP_VIEWER
+        } else if (FileUtils.isMediaFile(file)) {
+            // Open in built-in media viewer
             val intent = Intent(this, MediaViewerActivity::class.java).apply {
-                putExtra(MediaViewerActivity.EXTRA_FOLDER_PATH, file.parentFile!!.absolutePath)
                 putExtra(MediaViewerActivity.EXTRA_FILE_PATH, file.absolutePath)
+                if (file.parentFile != null) {
+                    // Load all same-type files in the folder
+                    putExtra(MediaViewerActivity.EXTRA_FOLDER_PATH, file.parentFile!!.absolutePath)
+                }
             }
             startActivity(intent)
         } else {
@@ -215,6 +261,20 @@ class TilesActivity : ComponentActivity() {
             } catch (e: Exception) {
                 Toast.makeText(this, "No app found to open this file", Toast.LENGTH_SHORT).show()
             }
+        }
+    }
+
+    /**
+     * Double-back-press to exit: first press shows a toast hint,
+     * a second press within 2 seconds exits the app.
+     */
+    private fun handleExitBackPress() {
+        val now = System.currentTimeMillis()
+        if (now - lastBackPressTime < 2000) {
+            finish()
+        } else {
+            lastBackPressTime = now
+            Toast.makeText(this, "Press back again to exit", Toast.LENGTH_SHORT).show()
         }
     }
 }

@@ -24,6 +24,8 @@ class MediaViewerActivity : ComponentActivity() {
     companion object {
         const val EXTRA_FOLDER_PATH = "folder_path"
         const val EXTRA_FILE_PATH = "file_path"
+        /** When true, only the single tapped file is shown — no swiping to siblings. */
+        const val EXTRA_SINGLE_FILE_MODE = "single_file_mode"
         private const val NOTIFICATION_PERMISSION_REQUEST_CODE = 100
     }
 
@@ -66,14 +68,19 @@ class MediaViewerActivity : ComponentActivity() {
     }
 
     private fun loadFromIntent(intent: android.content.Intent?): Boolean {
-        val folderPath = intent?.getStringExtra(EXTRA_FOLDER_PATH) ?: return false
-        val filePath = intent.getStringExtra(EXTRA_FILE_PATH) ?: return false
-
-        val folder = File(folderPath)
+        val filePath = intent?.getStringExtra(EXTRA_FILE_PATH) ?: return false
         val targetFile = File(filePath)
+        val singleFileMode = intent.getBooleanExtra(EXTRA_SINGLE_FILE_MODE, false)
 
-        // Auto-detect file type and only load files of the same type
-        val files = FileUtils.getFilesOfSameType(folder, targetFile)
+        val files: List<File> = if (singleFileMode) {
+            // Only open the one tapped file — no sibling swiping
+            if (targetFile.exists()) listOf(targetFile) else emptyList()
+        } else {
+            val folderPath = intent.getStringExtra(EXTRA_FOLDER_PATH) ?: return false
+            val folder = File(folderPath)
+            // Auto-detect file type and only load files of the same type
+            FileUtils.getFilesOfSameType(folder, targetFile)
+        }
 
         if (files.isEmpty()) return false
 

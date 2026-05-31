@@ -17,9 +17,19 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Apps
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Description
+import androidx.compose.material.icons.filled.FilterList
+import androidx.compose.material.icons.filled.Image
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.VideoLibrary
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -36,18 +46,24 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.gmail.omkarjoshi1989.ui.components.FileThumbnail
 import com.gmail.omkarjoshi1989.util.FileUtils
+import com.gmail.omkarjoshi1989.viewmodel.FileFilter
 import com.gmail.omkarjoshi1989.viewmodel.RecentFilesViewModel
+import com.gmail.omkarjoshi1989.viewmodel.SortOption
 import java.io.File
 import java.util.Date
 
@@ -59,6 +75,8 @@ fun RecentFilesScreen(
     onNavigateBack: () -> Unit
 ) {
     val uiState by viewModel.uiState.collectAsState()
+    var showSortMenu by remember { mutableStateOf(false) }
+    var showFilterMenu by remember { mutableStateOf(false) }
 
     Scaffold(
         topBar = {
@@ -85,15 +103,17 @@ fun RecentFilesScreen(
                         )
                     } else {
                         Column {
-                            Text("Recent Files", fontWeight = FontWeight.Bold)
-                            if (!uiState.isLoading) {
-                                Text(
-                                    text = "${uiState.totalFilesScanned} files",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
-                                )
+                                Text("All Files", fontWeight = FontWeight.Bold)
+                                if (!uiState.isLoading) {
+                                    val filterLabel = if (uiState.fileFilter == FileFilter.ALL) ""
+                                                      else " • ${uiState.fileFilter.label}"
+                                    Text(
+                                        text = "${uiState.filteredFiles.size}/${uiState.totalFilesScanned} files • ${uiState.sortOption.label}$filterLabel",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
+                                    )
+                                }
                             }
-                        }
                     }
                 },
                 navigationIcon = {
@@ -115,6 +135,98 @@ fun RecentFilesScreen(
                             }
                         }
                     } else {
+                        // Filter button
+                        Box {
+                            IconButton(onClick = { showFilterMenu = true }) {
+                                Icon(
+                                    imageVector = Icons.Filled.FilterList,
+                                    contentDescription = "Filter by type",
+                                    tint = if (uiState.fileFilter != FileFilter.ALL)
+                                               MaterialTheme.colorScheme.primary
+                                           else MaterialTheme.colorScheme.onPrimaryContainer
+                                )
+                            }
+                            DropdownMenu(
+                                expanded = showFilterMenu,
+                                onDismissRequest = { showFilterMenu = false }
+                            ) {
+                                data class FilterEntry(val filter: FileFilter, val icon: ImageVector)
+                                val filterEntries = listOf(
+                                    FilterEntry(FileFilter.ALL, Icons.Filled.Apps),
+                                    FilterEntry(FileFilter.IMAGES, Icons.Filled.Image),
+                                    FilterEntry(FileFilter.VIDEOS, Icons.Filled.VideoLibrary),
+                                    FilterEntry(FileFilter.IMAGES_AND_VIDEOS, Icons.Filled.Image),
+                                    FilterEntry(FileFilter.AUDIO, Icons.Filled.MusicNote),
+                                    FilterEntry(FileFilter.PDF, Icons.Filled.Description)
+                                )
+                                filterEntries.forEach { entry ->
+                                    DropdownMenuItem(
+                                        text = {
+                                            Text(
+                                                text = entry.filter.label,
+                                                fontWeight = if (uiState.fileFilter == entry.filter) FontWeight.Bold else FontWeight.Normal
+                                            )
+                                        },
+                                        leadingIcon = {
+                                            Icon(
+                                                imageVector = entry.icon,
+                                                contentDescription = null,
+                                                tint = if (uiState.fileFilter == entry.filter)
+                                                           MaterialTheme.colorScheme.primary
+                                                       else MaterialTheme.colorScheme.onSurface
+                                            )
+                                        },
+                                        onClick = {
+                                            viewModel.setFileFilter(entry.filter)
+                                            showFilterMenu = false
+                                        }
+                                    )
+                                }
+                            }
+                        }
+                        // Sort button
+                        Box {
+                            IconButton(onClick = { showSortMenu = true }) {
+                                Icon(
+                                    imageVector = if (uiState.sortAscending) Icons.Filled.KeyboardArrowUp
+                                                  else Icons.Filled.KeyboardArrowDown,
+                                    contentDescription = "Sort"
+                                )
+                            }
+                            DropdownMenu(
+                                expanded = showSortMenu,
+                                onDismissRequest = { showSortMenu = false }
+                            ) {
+                                SortOption.entries.forEach { option ->
+                                    DropdownMenuItem(
+                                        text = {
+                                            Row(
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                            ) {
+                                                Text(
+                                                    text = option.label,
+                                                    fontWeight = if (uiState.sortOption == option) FontWeight.Bold else FontWeight.Normal
+                                                )
+                                                if (uiState.sortOption == option) {
+                                                    Icon(
+                                                        imageVector = if (uiState.sortAscending) Icons.Filled.KeyboardArrowUp
+                                                                      else Icons.Filled.KeyboardArrowDown,
+                                                        contentDescription = if (uiState.sortAscending) "Ascending" else "Descending",
+                                                        modifier = Modifier.size(18.dp)
+                                                    )
+                                                }
+                                            }
+                                        },
+                                        onClick = {
+                                            viewModel.setSortOption(option)
+                                            showSortMenu = false
+                                        }
+                                    )
+                                }
+                            }
+                        }
+                        // Search button
                         IconButton(onClick = { viewModel.toggleSearch() }) {
                             Icon(Icons.Filled.Search, contentDescription = "Search")
                         }
@@ -149,8 +261,15 @@ fun RecentFilesScreen(
             } else if (uiState.filteredFiles.isEmpty()) {
                 Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     Text(
-                        text = if (uiState.searchQuery.isNotBlank()) "No files matching \"${uiState.searchQuery}\""
-                               else "No files found",
+                        text = when {
+                                uiState.searchQuery.isNotBlank() && uiState.fileFilter != FileFilter.ALL ->
+                                    "No ${uiState.fileFilter.label} matching \"${uiState.searchQuery}\""
+                                uiState.searchQuery.isNotBlank() ->
+                                    "No files matching \"${uiState.searchQuery}\""
+                                uiState.fileFilter != FileFilter.ALL ->
+                                    "No ${uiState.fileFilter.label} found"
+                                else -> "No files found"
+                            },
                         style = MaterialTheme.typography.bodyLarge,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -174,9 +293,11 @@ fun RecentFileItem(
     file: File,
     onClick: () -> Unit
 ) {
+    val isHidden = file.name.startsWith(".")
     Column(
         modifier = Modifier
             .fillMaxWidth()
+            .alpha(if (isHidden) 0.5f else 1f)
             .clickable(onClick = onClick)
     ) {
         Row(
@@ -234,4 +355,3 @@ fun RecentFileItem(
         )
     }
 }
-

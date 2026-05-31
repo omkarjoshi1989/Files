@@ -26,7 +26,8 @@
             android:name=".TilesActivity"
             android:exported="true"
             android:label="@string/app_name"
-            android:theme="@style/Theme.Files">
+            android:theme="@style/Theme.Files"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
 

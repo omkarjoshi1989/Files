@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material3.AlertDialog
@@ -18,6 +19,9 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -34,6 +38,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.gmail.omkarjoshi1989.util.SettingsManager
+import com.gmail.omkarjoshi1989.util.ThemeMode
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -47,31 +52,10 @@ fun SettingsScreen(
     var showHiddenFiles by remember {
         mutableStateOf(SettingsManager.isShowHiddenFiles(context))
     }
-    var showDisableConfirmation by remember { mutableStateOf(false) }
-
-    if (showDisableConfirmation) {
-        AlertDialog(
-            onDismissRequest = { showDisableConfirmation = false },
-            title = { Text("Disable Master Password?") },
-            text = {
-                Text("Anyone will be able to open this app without entering a PIN. Are you sure you want to disable the master password?")
-            },
-            confirmButton = {
-                TextButton(onClick = {
-                    masterPasswordEnabled = false
-                    SettingsManager.setMasterPasswordEnabled(context, false)
-                    showDisableConfirmation = false
-                }) {
-                    Text("Disable")
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { showDisableConfirmation = false }) {
-                    Text("Cancel")
-                }
-            }
-        )
+    var currentThemeMode by remember {
+        mutableStateOf(SettingsManager.getThemeMode(context))
     }
+    var showDisableConfirmation by remember { mutableStateOf(false) }
 
     Scaffold(
         topBar = {
@@ -172,7 +156,70 @@ fun SettingsScreen(
                 )
             }
             HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
+
+            // Theme mode setting
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 14.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.DarkMode,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary
+                )
+                Spacer(modifier = Modifier.width(16.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "Theme",
+                        style = MaterialTheme.typography.bodyLarge,
+                        fontWeight = FontWeight.Medium
+                    )
+                    Spacer(modifier = Modifier.padding(top = 8.dp))
+                    SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+                        ThemeMode.entries.forEachIndexed { index, mode ->
+                            SegmentedButton(
+                                shape = SegmentedButtonDefaults.itemShape(
+                                    index = index,
+                                    count = ThemeMode.entries.size
+                                ),
+                                selected = currentThemeMode == mode,
+                                onClick = {
+                                    currentThemeMode = mode
+                                    SettingsManager.setThemeMode(context, mode)
+                                },
+                                label = { Text(mode.label) }
+                            )
+                        }
+                    }
+                }
+            }
+            HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
         }
     }
-}
 
+    if (showDisableConfirmation) {
+        AlertDialog(
+            onDismissRequest = { showDisableConfirmation = false },
+            title = { Text("Disable Master Password?") },
+            text = {
+                Text("Anyone will be able to open this app without entering a PIN. Are you sure you want to disable the master password?")
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    masterPasswordEnabled = false
+                    SettingsManager.setMasterPasswordEnabled(context, false)
+                    showDisableConfirmation = false
+                }) {
+                    Text("Disable")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDisableConfirmation = false }) {
+                    Text("Cancel")
+                }
+            }
+        )
+    }
+}

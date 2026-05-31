@@ -3,6 +3,7 @@ package com.gmail.omkarjoshi1989.viewmodel
 import android.os.Environment
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.gmail.omkarjoshi1989.util.FileUtils
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -11,6 +12,23 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 
+enum class SortOption(val label: String) {
+    DATE("Date"),
+    NAME("Name"),
+    SIZE("Size"),
+    TYPE("Type"),
+    PATH("Path")
+}
+
+enum class FileFilter(val label: String) {
+    ALL("All Files"),
+    IMAGES("Images"),
+    VIDEOS("Videos"),
+    IMAGES_AND_VIDEOS("Images & Videos"),
+    AUDIO("Audio"),
+    PDF("PDF")
+}
+
 data class RecentFilesUiState(
     val files: List<File> = emptyList(),
     val filteredFiles: List<File> = emptyList(),
@@ -18,7 +36,10 @@ data class RecentFilesUiState(
     val isRefreshing: Boolean = false,
     val totalFilesScanned: Int = 0,
     val searchQuery: String = "",
-    val isSearchActive: Boolean = false
+    val isSearchActive: Boolean = false,
+    val sortOption: SortOption = SortOption.DATE,
+    val sortAscending: Boolean = false,
+    val fileFilter: FileFilter = FileFilter.ALL
 )
 
 class RecentFilesViewModel : ViewModel() {
@@ -32,14 +53,11 @@ class RecentFilesViewModel : ViewModel() {
 
     fun updateSearchQuery(query: String) {
         val current = _uiState.value
-        val filtered = if (query.isBlank()) {
-            current.files
-        } else {
-            current.files.filter { it.name.contains(query, ignoreCase = true) }
-        }
+        val filtered = applyFilter(current.files, current.fileFilter)
+            .let { if (query.isBlank()) it else it.filter { f -> f.name.contains(query, ignoreCase = true) } }
         _uiState.value = current.copy(
             searchQuery = query,
-            filteredFiles = filtered
+            filteredFiles = applySorting(filtered, current.sortOption, current.sortAscending)
         )
     }
 
@@ -47,14 +65,61 @@ class RecentFilesViewModel : ViewModel() {
         val current = _uiState.value
         if (current.isSearchActive) {
             // Close search → clear query and reset filter
+            val filtered = applyFilter(current.files, current.fileFilter)
             _uiState.value = current.copy(
                 isSearchActive = false,
                 searchQuery = "",
-                filteredFiles = current.files
+                filteredFiles = applySorting(filtered, current.sortOption, current.sortAscending)
             )
         } else {
             _uiState.value = current.copy(isSearchActive = true)
         }
+    }
+
+    fun setSortOption(option: SortOption) {
+        val current = _uiState.value
+        val newAscending = if (current.sortOption == option) !current.sortAscending else {
+            // Default ascending for name/path/type, descending for date/size
+            when (option) {
+                SortOption.NAME, SortOption.PATH, SortOption.TYPE -> true
+                SortOption.DATE, SortOption.SIZE -> false
+            }
+        }
+        _uiState.value = current.copy(
+            sortOption = option,
+            sortAscending = newAscending,
+            filteredFiles = applySorting(current.filteredFiles, option, newAscending)
+        )
+    }
+
+    fun setFileFilter(filter: FileFilter) {
+        val current = _uiState.value
+        val filtered = applyFilter(current.files, filter)
+            .let { if (current.searchQuery.isBlank()) it else it.filter { f -> f.name.contains(current.searchQuery, ignoreCase = true) } }
+        _uiState.value = current.copy(
+            fileFilter = filter,
+            filteredFiles = applySorting(filtered, current.sortOption, current.sortAscending)
+        )
+    }
+
+    private fun applyFilter(files: List<File>, filter: FileFilter): List<File> = when (filter) {
+        FileFilter.ALL -> files
+        FileFilter.IMAGES -> files.filter { FileUtils.isImageFile(it) }
+        FileFilter.VIDEOS -> files.filter { FileUtils.isVideoFile(it) }
+        FileFilter.IMAGES_AND_VIDEOS -> files.filter { FileUtils.isVisualMediaFile(it) }
+        FileFilter.AUDIO -> files.filter { FileUtils.isAudioFile(it) }
+        FileFilter.PDF -> files.filter { FileUtils.isPdfFile(it) }
+    }
+
+    private fun applySorting(files: List<File>, sortOption: SortOption, ascending: Boolean): List<File> {
+        val sorted = when (sortOption) {
+            SortOption.NAME -> files.sortedBy { it.name.lowercase() }
+            SortOption.SIZE -> files.sortedBy { it.length() }
+            SortOption.DATE -> files.sortedBy { it.lastModified() }
+            SortOption.TYPE -> files.sortedBy { it.extension.lowercase() }
+            SortOption.PATH -> files.sortedBy { it.absolutePath.lowercase() }
+        }
+        return if (ascending) sorted else sorted.reversed()
     }
 
     private fun loadRecentFiles() {
@@ -64,12 +129,12 @@ class RecentFilesViewModel : ViewModel() {
                 val files = withContext(Dispatchers.IO) {
                     scanAllFiles(Environment.getExternalStorageDirectory())
                 }
-                val query = _uiState.value.searchQuery
-                val filtered = if (query.isBlank()) files
-                else files.filter { it.name.contains(query, ignoreCase = true) }
-                _uiState.value = _uiState.value.copy(
+                val current = _uiState.value
+                val filtered = applyFilter(files, current.fileFilter)
+                    .let { if (current.searchQuery.isBlank()) it else it.filter { f -> f.name.contains(current.searchQuery, ignoreCase = true) } }
+                _uiState.value = current.copy(
                     files = files,
-                    filteredFiles = filtered,
+                    filteredFiles = applySorting(filtered, current.sortOption, current.sortAscending),
                     isLoading = false,
                     totalFilesScanned = files.size
                 )
@@ -90,12 +155,12 @@ class RecentFilesViewModel : ViewModel() {
                 val files = withContext(Dispatchers.IO) {
                     scanAllFiles(Environment.getExternalStorageDirectory())
                 }
-                val query = _uiState.value.searchQuery
-                val filtered = if (query.isBlank()) files
-                else files.filter { it.name.contains(query, ignoreCase = true) }
-                _uiState.value = _uiState.value.copy(
+                val current = _uiState.value
+                val filtered = applyFilter(files, current.fileFilter)
+                    .let { if (current.searchQuery.isBlank()) it else it.filter { f -> f.name.contains(current.searchQuery, ignoreCase = true) } }
+                _uiState.value = current.copy(
                     files = files,
-                    filteredFiles = filtered,
+                    filteredFiles = applySorting(filtered, current.sortOption, current.sortAscending),
                     isRefreshing = false,
                     totalFilesScanned = files.size
                 )
@@ -129,9 +194,8 @@ class RecentFilesViewModel : ViewModel() {
             }
         }
 
-        // Sort by last modified descending (most recent first)
+        // Sort by last modified descending (most recent first) as default
         result.sortByDescending { it.lastModified() }
         return result
     }
 }
-
