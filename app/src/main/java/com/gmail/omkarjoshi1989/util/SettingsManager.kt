@@ -15,6 +15,7 @@ object SettingsManager {
     private const val KEY_MASTER_PASSWORD_ENABLED = "master_password_enabled"
     private const val KEY_SHOW_HIDDEN_FILES = "show_hidden_files"
     private const val KEY_THEME_MODE = "theme_mode"
+    private const val KEY_BACKGROUND_PLAYBACK = "video_background_playback"
 
     private fun getPrefs(context: Context): SharedPreferences {
         return context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -43,5 +44,13 @@ object SettingsManager {
 
     fun setThemeMode(context: Context, mode: ThemeMode) {
         getPrefs(context).edit().putString(KEY_THEME_MODE, mode.name).apply()
+    }
+
+    fun isBackgroundPlaybackEnabled(context: Context): Boolean {
+        return getPrefs(context).getBoolean(KEY_BACKGROUND_PLAYBACK, false)
+    }
+
+    fun setBackgroundPlaybackEnabled(context: Context, enabled: Boolean) {
+        getPrefs(context).edit().putBoolean(KEY_BACKGROUND_PLAYBACK, enabled).apply()
     }
 }

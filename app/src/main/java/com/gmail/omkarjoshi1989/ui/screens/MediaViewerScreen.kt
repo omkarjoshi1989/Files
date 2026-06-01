@@ -112,6 +112,9 @@ import java.io.File
 import android.content.Context
 import androidx.compose.foundation.layout.width
 import androidx.core.content.edit
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 
 @kotlin.OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -572,43 +575,97 @@ private fun VideoPage(
             .build()
     }
 
+    // Helper: save current position synchronously (commit=true) so the write
+    // is guaranteed to reach disk even if the process is killed immediately after.
+    fun savePosition() {
+        try {
+            val prefs = context.getSharedPreferences("media_positions", Context.MODE_PRIVATE)
+            val pos = exoPlayer.currentPosition
+            val dur = exoPlayer.duration
+            if (pos > 0L && (dur <= 0L || pos < dur - 3_000L)) {
+                prefs.edit(commit = true) { putLong(file.absolutePath, pos) }
+            } else if (pos > 0L) {
+                // Near or past end — clear so next open starts fresh
+                prefs.edit(commit = true) { remove(file.absolutePath) }
+            }
+        } catch (_: Exception) {}
+    }
+
     LaunchedEffect(isActive, mediaUri) {
         if (isActive) {
             if (exoPlayer.currentMediaItem == null) {
-                exoPlayer.setMediaItem(MediaItem.fromUri(mediaUri))
+                // Read saved position BEFORE prepare() so we can pass it directly
+                // to setMediaItem — this is the most reliable way to start ExoPlayer
+                // at a specific position (avoids a race between prepare() and seekTo()).
+                val startPosition = try {
+                    val prefs = context.getSharedPreferences("media_positions", Context.MODE_PRIVATE)
+                    prefs.getLong(file.absolutePath, 0L).coerceAtLeast(0L)
+                } catch (_: Exception) { 0L }
+
+                exoPlayer.setMediaItem(MediaItem.fromUri(mediaUri), startPosition)
                 exoPlayer.prepare()
-            }
-            // Restore last-played position for this video if available
-            try {
-                val prefs = context.getSharedPreferences("media_positions", Context.MODE_PRIVATE)
-                val saved = prefs.getLong(file.absolutePath, 0L)
-                if (saved > 0L) exoPlayer.seekTo(saved)
-            } catch (_: Exception) {
             }
             // Explicitly pause music service when video page becomes active
             musicController?.let { mc ->
                 if (mc.isPlaying) mc.pause()
             }
+            // Auto-play so resume position takes effect immediately
+            exoPlayer.playWhenReady = true
         } else {
-            // Release decoder/sample buffers as soon as page is no longer active.
-            // Save current playback position for resume
-            try {
-                val prefs = context.getSharedPreferences("media_positions", Context.MODE_PRIVATE)
-                prefs.edit { putLong(file.absolutePath, exoPlayer.currentPosition) }
-            } catch (_: Exception) {}
+            // Page is no longer active — save position and release resources.
+            savePosition()
             exoPlayer.pause()
             exoPlayer.stop()
             exoPlayer.clearMediaItems()
         }
     }
 
+    // Clear stored position when playback naturally completes.
+    DisposableEffect(exoPlayer, file.absolutePath) {
+        val listener = object : Player.Listener {
+            override fun onPlaybackStateChanged(state: Int) {
+                if (state == Player.STATE_ENDED) {
+                    try {
+                        val prefs = context.getSharedPreferences(
+                            "media_positions",
+                            Context.MODE_PRIVATE
+                        )
+                        prefs.edit(commit = true) { remove(file.absolutePath) }
+                    } catch (_: Exception) {}
+                }
+            }
+        }
+        exoPlayer.addListener(listener)
+        onDispose { exoPlayer.removeListener(listener) }
+    }
+
+    // Periodically persist the current playback position while the page is
+    // active, so the resume position survives process death.
+    LaunchedEffect(exoPlayer, file.absolutePath, isActive) {
+        if (!isActive) return@LaunchedEffect
+        while (true) {
+            delay(3_000)
+            savePosition()
+        }
+    }
+
+    // Save position on every ON_PAUSE (guaranteed before the process can be killed).
+    // This is the most reliable save point and uses a synchronous commit.
+    val lifecycleOwnerForSave = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwnerForSave, file.absolutePath) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_PAUSE && isActive) {
+                savePosition()
+            }
+        }
+        lifecycleOwnerForSave.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwnerForSave.lifecycle.removeObserver(observer) }
+    }
+
     DisposableEffect(file.absolutePath) {
         onDispose {
-            // Persist position when the page is disposed
-            try {
-                val prefs = context.getSharedPreferences("media_positions", Context.MODE_PRIVATE)
-                prefs.edit { putLong(file.absolutePath, exoPlayer.currentPosition) }
-            } catch (_: Exception) {}
+            // Synchronous commit so the write reaches disk before the process dies.
+            savePosition()
             exoPlayer.stop()
             exoPlayer.clearMediaItems()
             exoPlayer.release()
@@ -624,6 +681,23 @@ private fun VideoPage(
         var controlsVisible by remember { mutableStateOf(true) }
         var playerViewRef by remember { mutableStateOf<PlayerView?>(null) }
         var widthPx by remember { mutableIntStateOf(0) }
+        var speedBoostActive by remember { mutableStateOf(false) }
+
+        // ── Background playback toggle (configured in Settings screen) ──
+        val backgroundPlaybackEnabled = remember(context) {
+            com.gmail.omkarjoshi1989.util.SettingsManager
+                .isBackgroundPlaybackEnabled(context)
+        }
+        val lifecycleOwner = LocalLifecycleOwner.current
+        DisposableEffect(lifecycleOwner, backgroundPlaybackEnabled) {
+            val observer = LifecycleEventObserver { _, event ->
+                if (event == Lifecycle.Event.ON_STOP && !backgroundPlaybackEnabled) {
+                    try { exoPlayer.pause() } catch (_: Exception) {}
+                }
+            }
+            lifecycleOwner.lifecycle.addObserver(observer)
+            onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+        }
 
         // ── Hoisted volume state ────────────────────────────────────────
         val audioManager = remember(context) {
@@ -696,7 +770,23 @@ private fun VideoPage(
                 .then(
                     if (!controlsVisible) {
                         Modifier.pointerInput(exoPlayer) {
+                            var boostActive = false
                             detectTapGestures(
+                                onPress = {
+                                    tryAwaitRelease()
+                                    if (boostActive) {
+                                        try { exoPlayer.setPlaybackSpeed(1f) } catch (_: Exception) {}
+                                        boostActive = false
+                                        speedBoostActive = false
+                                    }
+                                },
+                                onLongPress = {
+                                    if (exoPlayer.isPlaying) {
+                                        try { exoPlayer.setPlaybackSpeed(1.5f) } catch (_: Exception) {}
+                                        boostActive = true
+                                        speedBoostActive = true
+                                    }
+                                },
                                 onTap = {
                                     playerViewRef?.showController()
                                 },
@@ -773,6 +863,30 @@ private fun VideoPage(
                     modifier = Modifier
                         .align(Alignment.CenterEnd)
                         .padding(end = 12.dp)
+                )
+            }
+        }
+
+        AnimatedVisibility(
+            visible = speedBoostActive,
+            enter = fadeIn(),
+            exit = fadeOut(),
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .systemBarsPadding()
+                .padding(top = 16.dp)
+        ) {
+            Box(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(Color.Black.copy(alpha = 0.6f))
+                    .padding(horizontal = 12.dp, vertical = 6.dp)
+            ) {
+                Text(
+                    text = "1.5x",
+                    color = Color.White,
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.SemiBold
                 )
             }
         }

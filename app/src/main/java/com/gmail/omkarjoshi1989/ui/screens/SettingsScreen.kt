@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.DarkMode
+import androidx.compose.material.icons.filled.Headphones
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material3.AlertDialog
@@ -54,6 +55,9 @@ fun SettingsScreen(
     }
     var currentThemeMode by remember {
         mutableStateOf(SettingsManager.getThemeMode(context))
+    }
+    var backgroundPlaybackEnabled by remember {
+        mutableStateOf(SettingsManager.isBackgroundPlaybackEnabled(context))
     }
     var showDisableConfirmation by remember { mutableStateOf(false) }
 
@@ -194,6 +198,44 @@ fun SettingsScreen(
                         }
                     }
                 }
+            }
+            HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
+
+            // Background video playback
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 14.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.Headphones,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary
+                )
+                Spacer(modifier = Modifier.width(16.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "Background Video Playback",
+                        style = MaterialTheme.typography.bodyLarge,
+                        fontWeight = FontWeight.Medium
+                    )
+                    Text(
+                        text = if (backgroundPlaybackEnabled)
+                            "Video audio keeps playing when app is in background"
+                        else
+                            "Video pauses when app goes to background",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Switch(
+                    checked = backgroundPlaybackEnabled,
+                    onCheckedChange = { enabled ->
+                        backgroundPlaybackEnabled = enabled
+                        SettingsManager.setBackgroundPlaybackEnabled(context, enabled)
+                    }
+                )
             }
             HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
         }
