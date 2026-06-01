@@ -79,7 +79,7 @@ class MediaViewerActivity : ComponentActivity() {
             val folderPath = intent.getStringExtra(EXTRA_FOLDER_PATH) ?: return false
             val folder = File(folderPath)
             // Auto-detect file type and only load files of the same type
-            FileUtils.getFilesOfSameType(folder, targetFile)
+            FileUtils.getFilesOfSameType(this, folder, targetFile)
         }
 
         if (files.isEmpty()) return false

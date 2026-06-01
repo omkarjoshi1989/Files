@@ -54,6 +54,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.FileProvider
 import com.gmail.omkarjoshi1989.util.FileUtils
+import com.gmail.omkarjoshi1989.util.SettingsManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -82,7 +83,7 @@ fun ApplicationsScreen(
     LaunchedEffect(Unit) {
         isLoading = true
         val files = withContext(Dispatchers.IO) {
-            scanForApkFiles(Environment.getExternalStorageDirectory())
+            scanForApkFiles(context, Environment.getExternalStorageDirectory())
         }
         val infos = withContext(Dispatchers.IO) {
             files.map { file -> extractApkInfo(context, file) }
@@ -323,7 +324,8 @@ private fun ApkListItem(
     }
 }
 
-private fun scanForApkFiles(root: File): List<File> {
+private fun scanForApkFiles(context: Context, root: File): List<File> {
+    val showHidden = SettingsManager.isShowHiddenFiles(context)
     val result = mutableListOf<File>()
     val stack = ArrayDeque<File>()
     stack.addLast(root)
@@ -332,6 +334,9 @@ private fun scanForApkFiles(root: File): List<File> {
         val current = stack.removeLast()
         val children = try { current.listFiles() } catch (_: Exception) { null } ?: continue
         for (child in children) {
+            // Universal hidden-files filter
+            if (!showHidden && child.isHidden) continue
+
             if (child.isDirectory) {
                 val name = child.name
                 if (name != ".thumbnails" && name != ".cache" && name != "cache") {

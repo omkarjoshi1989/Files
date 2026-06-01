@@ -53,6 +53,7 @@ import com.gmail.omkarjoshi1989.ui.components.FileThumbnail
 import com.gmail.omkarjoshi1989.util.FavoritesManager
 import com.gmail.omkarjoshi1989.util.FileUtils
 import com.gmail.omkarjoshi1989.util.RecycleBinManager
+import com.gmail.omkarjoshi1989.util.SettingsManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -76,10 +77,13 @@ fun FavoritesScreen(
     var showDeleteDialog by remember { mutableStateOf(false) }
     var renameText by remember { mutableStateOf("") }
 
-    val favoriteFiles = remember(favoritePaths) {
+    val showHidden = remember { SettingsManager.isShowHiddenFiles(context) }
+
+    val favoriteFiles = remember(favoritePaths, showHidden) {
         favoritePaths
             .map { File(it) }
             .filter { it.exists() && it.isFile }
+            .filter { showHidden || !it.isHidden }
             .sortedBy { it.name.lowercase() }
     }
 

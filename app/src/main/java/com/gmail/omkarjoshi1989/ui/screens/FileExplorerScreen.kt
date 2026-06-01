@@ -818,7 +818,8 @@ fun FileListItem(
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     } else {
-                        val itemCount = file.listFiles()?.size ?: 0
+                        val showHidden = viewModel.uiState.collectAsState().value.showHiddenFiles
+                        val itemCount = file.listFiles()?.count { showHidden || !it.isHidden } ?: 0
                         val folderSize = viewModel.getFolderSize(file)
                         Text(
                             text = if (folderSize != null) "$itemCount items • $folderSize"

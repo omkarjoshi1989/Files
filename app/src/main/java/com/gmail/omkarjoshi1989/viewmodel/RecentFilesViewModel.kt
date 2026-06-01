@@ -1,9 +1,13 @@
 package com.gmail.omkarjoshi1989.viewmodel
 
+import android.app.Application
+import android.content.Context
+import android.content.SharedPreferences
 import android.os.Environment
-import androidx.lifecycle.ViewModel
+import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.gmail.omkarjoshi1989.util.FileUtils
+import com.gmail.omkarjoshi1989.util.SettingsManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -44,13 +48,27 @@ data class RecentFilesUiState(
     val errorMessage: String? = null
 )
 
-class RecentFilesViewModel : ViewModel() {
+class RecentFilesViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _uiState = MutableStateFlow(RecentFilesUiState())
     val uiState: StateFlow<RecentFilesUiState> = _uiState.asStateFlow()
 
+    private val prefsListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
+        if (key == "show_hidden_files") refresh()
+    }
+
     init {
+        getApplication<Application>()
+            .getSharedPreferences("app_settings", Context.MODE_PRIVATE)
+            .registerOnSharedPreferenceChangeListener(prefsListener)
         loadRecentFiles()
+    }
+
+    override fun onCleared() {
+        getApplication<Application>()
+            .getSharedPreferences("app_settings", Context.MODE_PRIVATE)
+            .unregisterOnSharedPreferenceChangeListener(prefsListener)
+        super.onCleared()
     }
 
     fun updateSearchQuery(query: String) {
@@ -234,6 +252,7 @@ class RecentFilesViewModel : ViewModel() {
     }
 
     private fun scanAllFiles(root: File): List<File> {
+        val showHidden = SettingsManager.isShowHiddenFiles(getApplication())
         val result = mutableListOf<File>()
         val stack = ArrayDeque<File>()
         stack.addLast(root)
@@ -242,6 +261,9 @@ class RecentFilesViewModel : ViewModel() {
             val current = stack.removeLast()
             val children = current.listFiles() ?: continue
             for (child in children) {
+                // Universal hidden-files filter
+                if (!showHidden && child.isHidden) continue
+
                 if (child.isDirectory) {
                     // Skip Android system directories to avoid slowdown
                     val name = child.name

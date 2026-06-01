@@ -38,9 +38,10 @@ object FileUtils {
         return ext in imageExtensions || ext in videoExtensions
     }
 
-    fun getMediaFilesInFolder(folder: File): List<File> {
+    fun getMediaFilesInFolder(context: Context, folder: File): List<File> {
+        val showHidden = SettingsManager.isShowHiddenFiles(context)
         return folder.listFiles()
-            ?.filter { it.isFile && isMediaFile(it) }
+            ?.filter { it.isFile && isMediaFile(it) && (showHidden || !it.isHidden) }
             ?.sortedBy { it.name.lowercase() }
             ?: emptyList()
     }
@@ -48,16 +49,18 @@ object FileUtils {
     /**
      * Returns image + video files combined (visual media) from the folder.
      */
-    fun getVisualMediaFilesInFolder(folder: File): List<File> {
+    fun getVisualMediaFilesInFolder(context: Context, folder: File): List<File> {
+        val showHidden = SettingsManager.isShowHiddenFiles(context)
         return folder.listFiles()
-            ?.filter { it.isFile && isVisualMediaFile(it) }
+            ?.filter { it.isFile && isVisualMediaFile(it) && (showHidden || !it.isHidden) }
             ?.sortedBy { it.name.lowercase() }
             ?: emptyList()
     }
 
-    fun getAudioFilesInFolder(folder: File): List<File> {
+    fun getAudioFilesInFolder(context: Context, folder: File): List<File> {
+        val showHidden = SettingsManager.isShowHiddenFiles(context)
         return folder.listFiles()
-            ?.filter { it.isFile && isAudioFile(it) }
+            ?.filter { it.isFile && isAudioFile(it) && (showHidden || !it.isHidden) }
             ?.sortedBy { it.name.lowercase() }
             ?: emptyList()
     }
@@ -68,11 +71,11 @@ object FileUtils {
      * Audio files are grouped separately.
      * Falls back to all media files if the reference file type is unknown.
      */
-    fun getFilesOfSameType(folder: File, referenceFile: File): List<File> {
+    fun getFilesOfSameType(context: Context, folder: File, referenceFile: File): List<File> {
         return when {
-            isVisualMediaFile(referenceFile) -> getVisualMediaFilesInFolder(folder)
-            isAudioFile(referenceFile) -> getAudioFilesInFolder(folder)
-            else -> getMediaFilesInFolder(folder)
+            isVisualMediaFile(referenceFile) -> getVisualMediaFilesInFolder(context, folder)
+            isAudioFile(referenceFile) -> getAudioFilesInFolder(context, folder)
+            else -> getMediaFilesInFolder(context, folder)
         }
     }
 
