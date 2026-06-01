@@ -1,6 +1,13 @@
 package com.gmail.omkarjoshi1989.ui.screens
 
+import android.app.Activity
+import android.database.ContentObserver
+import android.media.AudioManager
+import android.os.Handler
+import android.os.Looper
+import android.provider.Settings
 import android.view.ViewGroup
+import android.view.WindowManager
 import android.widget.FrameLayout
 import androidx.annotation.OptIn
 import androidx.compose.animation.AnimatedVisibility
@@ -22,12 +29,16 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.wrapContentHeight
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.BrightnessHigh
+import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
@@ -59,6 +70,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
@@ -131,6 +145,47 @@ fun MediaViewerScreen(
 
     val currentFile = mediaFiles.getOrNull(virtualToActual(pagerState.settledPage))
     var isImmersive by remember { mutableStateOf(false) }
+
+    // ── Screen-level brightness override (shared across video pages) ────
+    val screenActivity = remember(context) {
+        var c: Context? = context
+        while (c is android.content.ContextWrapper && c !is Activity) c = c.baseContext
+        c as? Activity
+    }
+    var screenBrightness by remember(screenActivity) {
+        val seeded = if (screenActivity == null) {
+            0.5f
+        } else {
+            val current = screenActivity.window.attributes.screenBrightness
+            if (current >= 0f) current else {
+                try {
+                    Settings.System.getInt(
+                        screenActivity.contentResolver,
+                        Settings.System.SCREEN_BRIGHTNESS
+                    ) / 255f
+                } catch (_: Exception) {
+                    0.5f
+                }
+            }
+        }
+        mutableStateOf(seeded.coerceIn(0f, 1f))
+    }
+    LaunchedEffect(screenActivity, screenBrightness) {
+        screenActivity?.let {
+            val lp = it.window.attributes
+            lp.screenBrightness = screenBrightness.coerceIn(0.01f, 1f)
+            it.window.attributes = lp
+        }
+    }
+    DisposableEffect(screenActivity) {
+        onDispose {
+            screenActivity?.let {
+                val lp = it.window.attributes
+                lp.screenBrightness = WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
+                it.window.attributes = lp
+            }
+        }
+    }
 
     // ── Audio playlist mapping ──────────────────────────────────────────
     // audioPageIndices: list of pager indices that are audio files (in pager order)
@@ -392,6 +447,8 @@ fun MediaViewerScreen(
                     file = file,
                     isActive = isCurrentPage,
                     musicController = musicController,
+                    brightness = screenBrightness,
+                    onBrightnessChange = { screenBrightness = it.coerceIn(0f, 1f) },
                     onImmersiveChange = { immersive -> isImmersive = immersive }
                 )
                 FileUtils.isAudioFile(file) -> AudioPage(
@@ -485,6 +542,8 @@ private fun VideoPage(
     file: File,
     isActive: Boolean,
     musicController: MediaController?,
+    brightness: Float,
+    onBrightnessChange: (Float) -> Unit,
     onImmersiveChange: (Boolean) -> Unit
 ) {
     val context = LocalContext.current
@@ -562,6 +621,36 @@ private fun VideoPage(
             .background(Color.Black),
         contentAlignment = Alignment.Center
     ) {
+        var controlsVisible by remember { mutableStateOf(true) }
+        var playerViewRef by remember { mutableStateOf<PlayerView?>(null) }
+        var widthPx by remember { mutableIntStateOf(0) }
+
+        // ── Hoisted volume state ────────────────────────────────────────
+        val audioManager = remember(context) {
+            context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        }
+        val maxVolume = remember(audioManager) {
+            audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC).coerceAtLeast(1)
+        }
+        var rawVolume by remember(audioManager) {
+            mutableIntStateOf(audioManager.getStreamVolume(AudioManager.STREAM_MUSIC))
+        }
+        DisposableEffect(audioManager) {
+            val observer = object : ContentObserver(Handler(Looper.getMainLooper())) {
+                override fun onChange(selfChange: Boolean) {
+                    rawVolume = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
+                }
+            }
+            context.contentResolver.registerContentObserver(
+                Settings.System.CONTENT_URI,
+                true,
+                observer
+            )
+            onDispose {
+                context.contentResolver.unregisterContentObserver(observer)
+            }
+        }
+
         AndroidView(
             factory = { ctx ->
                 PlayerView(ctx).apply {
@@ -580,17 +669,145 @@ private fun VideoPage(
                     )
                     setControllerVisibilityListener(
                         PlayerView.ControllerVisibilityListener { visibility ->
-                            val controllerVisible = visibility == android.view.View.VISIBLE
-                            onImmersiveChange(!controllerVisible)
+                            val visible = visibility == android.view.View.VISIBLE
+                            controlsVisible = visible
+                            onImmersiveChange(!visible)
                         }
                     )
+                    playerViewRef = this
                 }
             },
             update = { playerView ->
                 playerView.player = exoPlayer
+                playerViewRef = playerView
             },
             modifier = Modifier.fillMaxSize()
         )
+
+        // Tap overlay (active only while controller is hidden): single tap
+        // re-shows the controller; double-tap on the left half rewinds 10s,
+        // on the right half fast-forwards 10s. When the controller IS
+        // visible, this Box is a passive layer so taps on play/pause/seek
+        // inside PlayerView are not intercepted.
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .onSizeChanged { widthPx = it.width }
+                .then(
+                    if (!controlsVisible) {
+                        Modifier.pointerInput(exoPlayer) {
+                            detectTapGestures(
+                                onTap = {
+                                    playerViewRef?.showController()
+                                },
+                                onDoubleTap = { offset ->
+                                    if (widthPx > 0) {
+                                        val isLeft = offset.x < widthPx / 2f
+                                        val duration = exoPlayer.duration
+                                        val current = exoPlayer.currentPosition
+                                        val target = if (isLeft) {
+                                            (current - 10_000L).coerceAtLeast(0L)
+                                        } else {
+                                            val upper = if (duration > 0) duration else Long.MAX_VALUE
+                                            (current + 10_000L).coerceAtMost(upper)
+                                        }
+                                        exoPlayer.seekTo(target)
+                                    }
+                                }
+                            )
+                        }
+                    } else Modifier
+                )
+        )
+
+        AnimatedVisibility(
+            visible = controlsVisible,
+            enter = fadeIn(),
+            exit = fadeOut(),
+            modifier = Modifier.fillMaxSize()
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .systemBarsPadding()
+            ) {
+                VerticalSliderColumn(
+                    icon = {
+                        Icon(
+                            imageVector = Icons.Filled.BrightnessHigh,
+                            contentDescription = "Brightness",
+                            tint = Color.White,
+                            modifier = Modifier.size(24.dp)
+                        )
+                    },
+                    value = brightness,
+                    onValueChange = { onBrightnessChange(it) },
+                    modifier = Modifier
+                        .align(Alignment.CenterStart)
+                        .padding(start = 12.dp)
+                )
+                VerticalSliderColumn(
+                    icon = {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.VolumeUp,
+                            contentDescription = "Volume",
+                            tint = Color.White,
+                            modifier = Modifier.size(24.dp)
+                        )
+                    },
+                    value = rawVolume.toFloat() / maxVolume.toFloat(),
+                    onValueChange = { f ->
+                        val newVolume = (f * maxVolume).toInt().coerceIn(0, maxVolume)
+                        if (newVolume != rawVolume) {
+                            rawVolume = newVolume
+                            try {
+                                audioManager.setStreamVolume(
+                                    AudioManager.STREAM_MUSIC,
+                                    newVolume,
+                                    0
+                                )
+                            } catch (_: SecurityException) {
+                            }
+                        }
+                    },
+                    modifier = Modifier
+                        .align(Alignment.CenterEnd)
+                        .padding(end = 12.dp)
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun VerticalSliderColumn(
+    icon: @Composable () -> Unit,
+    value: Float,
+    onValueChange: (Float) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Column(
+        modifier = modifier
+            .width(48.dp)
+            .pointerInput(Unit) { },
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center
+    ) {
+        icon()
+        Spacer(modifier = Modifier.height(8.dp))
+        Box(
+            modifier = Modifier.size(width = 48.dp, height = 220.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            Slider(
+                value = value.coerceIn(0f, 1f),
+                onValueChange = onValueChange,
+                valueRange = 0f..1f,
+                modifier = Modifier
+                    .graphicsLayer { rotationZ = -90f }
+                    .requiredSize(width = 220.dp, height = 48.dp)
+            )
+        }
     }
 }
 
