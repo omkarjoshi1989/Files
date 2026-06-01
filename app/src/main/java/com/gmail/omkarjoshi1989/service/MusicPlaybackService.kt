@@ -12,6 +12,7 @@ import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
 import com.gmail.omkarjoshi1989.MediaViewerActivity
+import com.gmail.omkarjoshi1989.util.MusicResumeManager
 import java.io.File
 
 /**
@@ -51,6 +52,9 @@ class MusicPlaybackService : MediaSessionService() {
                 val filePath = uri.path ?: return
                 val file = File(filePath)
                 val folderPath = file.parent ?: return
+
+                // Persist last-played info so the File Explorer can offer a resume button
+                MusicResumeManager.saveLastPlayed(this@MusicPlaybackService, folderPath, filePath)
 
                 val intent = Intent(this@MusicPlaybackService, MediaViewerActivity::class.java).apply {
                     putExtra(MediaViewerActivity.EXTRA_FOLDER_PATH, folderPath)

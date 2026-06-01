@@ -478,7 +478,7 @@ fun RecentFileItem(
                 )
                 Spacer(modifier = Modifier.height(2.dp))
                 Text(
-                    text = file.parent ?: "",
+                    text = FileUtils.toDisplayPath(file.parent ?: ""),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
                     maxLines = 1,

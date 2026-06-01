@@ -79,6 +79,24 @@ object FileUtils {
         }
     }
 
+    /**
+     * Converts an absolute file-system path to a human-readable display path by
+     * stripping the internal-storage root ("/storage/emulated/0") so the user
+     * sees e.g. "Pictures/Instagram" instead of "/storage/emulated/0/Pictures/Instagram".
+     *
+     * If [path] is exactly the internal-storage root (or empty after stripping),
+     * returns "Internal Storage".
+     */
+    fun toDisplayPath(path: String): String {
+        val internalRoot = "/storage/emulated/0"
+        val stripped = if (path.startsWith(internalRoot)) {
+            path.removePrefix(internalRoot).trimStart('/')
+        } else {
+            path.trimStart('/')
+        }
+        return stripped.ifEmpty { "Internal Storage" }
+    }
+
     fun formatFileSize(size: Long): String {
         return when {
             size < 1024 -> "$size B"

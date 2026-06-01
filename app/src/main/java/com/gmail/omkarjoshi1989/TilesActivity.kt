@@ -37,6 +37,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.gmail.omkarjoshi1989.ui.screens.ApplicationsScreen
+import com.gmail.omkarjoshi1989.ui.screens.AudioFoldersScreen
 import com.gmail.omkarjoshi1989.ui.screens.FavoritesScreen
 import com.gmail.omkarjoshi1989.ui.screens.FileExplorerScreen
 import com.gmail.omkarjoshi1989.ui.screens.PinLockScreen
@@ -53,7 +54,7 @@ import com.gmail.omkarjoshi1989.viewmodel.RecentFilesViewModel
 import com.gmail.omkarjoshi1989.viewmodel.ZipViewModel
 
 enum class Screen {
-    FILE_EXPLORER, RECENT_FILES, FAVORITES, APPLICATIONS, SETTINGS, ZIP_VIEWER, RECYCLE_BIN
+    FILE_EXPLORER, RECENT_FILES, FAVORITES, APPLICATIONS, SETTINGS, ZIP_VIEWER, RECYCLE_BIN, AUDIO_FOLDERS
 }
 
 class TilesActivity : ComponentActivity() {
@@ -132,6 +133,7 @@ class TilesActivity : ComponentActivity() {
                                 onNavigateToApplications = { currentScreen = Screen.APPLICATIONS },
                                 onNavigateToSettings = { currentScreen = Screen.SETTINGS },
                                 onNavigateToRecycleBin = { currentScreen = Screen.RECYCLE_BIN },
+                                onNavigateToAudioFolders = { currentScreen = Screen.AUDIO_FOLDERS },
                                 onShowToast = { msg -> Toast.makeText(this, msg, Toast.LENGTH_SHORT).show() }
                             )
                         }
@@ -186,6 +188,12 @@ class TilesActivity : ComponentActivity() {
                         Screen.RECYCLE_BIN -> {
                             BackHandler { currentScreen = Screen.FILE_EXPLORER }
                             RecycleBinScreen(
+                                onNavigateBack = { currentScreen = Screen.FILE_EXPLORER }
+                            )
+                        }
+                        Screen.AUDIO_FOLDERS -> {
+                            BackHandler { currentScreen = Screen.FILE_EXPLORER }
+                            AudioFoldersScreen(
                                 onNavigateBack = { currentScreen = Screen.FILE_EXPLORER }
                             )
                         }

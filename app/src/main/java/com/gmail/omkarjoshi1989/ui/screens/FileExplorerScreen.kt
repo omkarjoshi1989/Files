@@ -44,6 +44,7 @@ import androidx.compose.material.icons.filled.DeleteSweep
 import androidx.compose.material.icons.filled.DriveFileRenameOutline
 import androidx.compose.material.icons.filled.FolderZip
 import androidx.compose.material.icons.filled.NoteAdd
+import androidx.compose.material.icons.filled.PlayCircle
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.StarBorder
 import androidx.compose.material.icons.filled.Share
@@ -111,6 +112,7 @@ fun FileExplorerScreen(
     onNavigateToApplications: () -> Unit,
     onNavigateToSettings: () -> Unit,
     onNavigateToRecycleBin: () -> Unit,
+    onNavigateToAudioFolders: () -> Unit,
     onShowToast: (String) -> Unit
 ) {
     val context = LocalContext.current
@@ -391,6 +393,14 @@ fun FileExplorerScreen(
                             }
                         } else {
                             // Normal mode actions
+                            // Music button — navigates to the Audio Folders screen
+                            IconButton(onClick = { onNavigateToAudioFolders() }) {
+                                Icon(
+                                    Icons.Filled.PlayCircle,
+                                    contentDescription = "Music",
+                                    tint = MaterialTheme.colorScheme.primary
+                                )
+                            }
                             IconButton(onClick = { viewModel.toggleSearch() }) {
                                 Icon(Icons.Filled.Search, contentDescription = "Search")
                             }
@@ -935,3 +945,4 @@ fun FileOperationItem(
         Text(text = label, style = MaterialTheme.typography.bodyLarge, color = tint)
     }
 }
+

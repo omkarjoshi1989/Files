@@ -949,6 +949,26 @@ private fun AudioPage(
     onToggleRepeat: () -> Unit,
     onTap: () -> Unit
 ) {
+    val configuration = LocalConfiguration.current
+    val isLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
+
+    // Album art loaded once per file
+    val albumArt by produceState<Bitmap?>(initialValue = null, key1 = file.absolutePath) {
+        value = try {
+            withContext(Dispatchers.IO) { loadAlbumArt(file) }
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    // Seek state hoisted so both portrait and landscape can share it
+    var isSeeking by remember { mutableStateOf(false) }
+    var seekPosition by remember { mutableLongStateOf(currentPosition) }
+    val progressFraction = if (duration > 0) {
+        if (isSeeking) seekPosition.toFloat() / duration.toFloat()
+        else currentPosition.toFloat() / duration.toFloat()
+    } else 0f
+
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -959,220 +979,334 @@ private fun AudioPage(
             ) { onTap() },
         contentAlignment = Alignment.Center
     ) {
-        Column(
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center,
-            modifier = Modifier.padding(32.dp)
-        ) {
-            // Album art: fill width (left/right) and wrap height to preserve aspect ratio
-            val albumArt by produceState<Bitmap?>(initialValue = null, key1 = file.absolutePath) {
-                value = try {
-                    withContext(Dispatchers.IO) { loadAlbumArt(file) }
-                } catch (_: Exception) {
-                    null
-                }
-            }
-
-            if (albumArt != null) {
-                AsyncImage(
-                    model = ImageRequest.Builder(LocalContext.current)
-                        .data(albumArt)
-                        .crossfade(true)
-                        .build(),
-                    contentDescription = "Album art",
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .wrapContentHeight()
-                        .clip(RoundedCornerShape(12.dp)),
-                    contentScale = ContentScale.Fit
-                )
-            } else {
-                // Fallback audio icon when no art embedded
-                Box(
-                    modifier = Modifier
-                        .size(120.dp)
-                        .clip(RoundedCornerShape(24.dp))
-                        .background(Color(0xFFFF9800).copy(alpha = 0.2f)),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        imageVector = Icons.Filled.MusicNote,
-                        contentDescription = "Audio",
-                        modifier = Modifier.size(64.dp),
-                        tint = Color(0xFFFF9800)
-                    )
-                }
-            }
-
-            Spacer(modifier = Modifier.height(24.dp))
-
-            // File name
-            Text(
-                text = file.name,
-                color = Color.White,
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Bold,
-                textAlign = TextAlign.Center,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis
-            )
-
-            Spacer(modifier = Modifier.height(8.dp))
-
-            // File size
-            Text(
-                text = FileUtils.formatFileSize(file.length()),
-                color = Color.White.copy(alpha = 0.6f),
-                style = MaterialTheme.typography.bodySmall
-            )
-
-            Spacer(modifier = Modifier.height(32.dp))
-
-            // Seek / Progress controls
-            var isSeeking by remember { mutableStateOf(false) }
-            var seekPosition by remember { mutableLongStateOf(currentPosition) }
-
-            val progressFraction = if (duration > 0) {
-                if (isSeeking) seekPosition.toFloat() / duration.toFloat() else currentPosition.toFloat() / duration.toFloat()
-            } else 0f
-
-            Slider(
-                value = progressFraction,
-                onValueChange = { fraction ->
-                    if (duration > 0) {
-                        isSeeking = true
-                        seekPosition = (fraction * duration).toLong()
-                    }
-                },
-                onValueChangeFinished = {
-                    controller?.let { mc ->
-                        if (duration > 0) {
-                            try {
-                                mc.seekTo(seekPosition)
-                            } catch (_: Exception) {
-                                try { mc.seekToDefaultPosition() } catch (_: Exception) {}
-                            }
-                        }
-                    }
-                    isSeeking = false
-                },
+        if (isLandscape) {
+            // ── Landscape layout: album art on left half, controls on right half ──
+            Row(
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .height(24.dp),
-                valueRange = 0f..1f
-            )
-
-            Spacer(modifier = Modifier.height(8.dp))
-
-            // Time labels
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Text(
-                    text = formatTime(currentPosition),
-                    color = Color.White.copy(alpha = 0.7f),
-                    fontSize = 12.sp
-                )
-                Text(
-                    text = formatTime(duration),
-                    color = Color.White.copy(alpha = 0.7f),
-                    fontSize = 12.sp
-                )
-            }
-
-            Spacer(modifier = Modifier.height(24.dp))
-            // Playback controls: Repeat · Previous · Play/Pause · Next — all circular, in one row
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceEvenly,
+                    .fillMaxSize()
+                    .padding(horizontal = 24.dp, vertical = 16.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                val repeatActive = repeatMode == Player.REPEAT_MODE_ONE
-
-                // Repeat toggle (circular, sized like skip buttons)
-                IconButton(
-                    onClick = { onToggleRepeat() },
+                // Left half — album art
+                Box(
                     modifier = Modifier
-                        .size(64.dp)
-                        .clip(CircleShape)
-                        .background(
-                            if (repeatActive) Color(0xFFFF9800).copy(alpha = 0.25f)
-                            else Color.White.copy(alpha = 0.12f)
-                        )
+                        .weight(1f)
+                        .fillMaxSize(),
+                    contentAlignment = Alignment.Center
                 ) {
-                    Icon(
-                        imageVector = if (repeatActive) Icons.Filled.RepeatOne else Icons.Filled.Repeat,
-                        contentDescription = "Repeat",
-                        modifier = Modifier.size(32.dp),
-                        tint = if (repeatActive) Color(0xFFFF9800) else Color.White
-                    )
+                    AudioAlbumArt(albumArt = albumArt, landscapeMode = true)
                 }
 
-                // Previous track
-                IconButton(
-                    onClick = {
-                        controller?.let { mc ->
-                            try { mc.seekToPrevious() } catch (_: Exception) {}
-                        }
-                    },
+                // Right half — all controls
+                Column(
                     modifier = Modifier
-                        .size(64.dp)
-                        .clip(CircleShape)
-                        .background(Color.White.copy(alpha = 0.12f))
+                        .weight(1f)
+                        .fillMaxSize()
+                        .padding(start = 16.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center
                 ) {
-                    Icon(
-                        imageVector = Icons.Filled.SkipPrevious,
-                        contentDescription = "Previous",
-                        modifier = Modifier.size(36.dp),
-                        tint = Color.White
+                    // File name
+                    Text(
+                        text = file.name,
+                        color = Color.White,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        textAlign = TextAlign.Center,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
                     )
-                }
 
-                // Play / Pause (primary, larger)
-                IconButton(
-                    onClick = {
-                        controller?.let { mc ->
-                            if (mc.isPlaying) {
-                                mc.pause()
-                            } else {
-                                mc.playWhenReady = true
+                    Spacer(modifier = Modifier.height(4.dp))
+
+                    // File size
+                    Text(
+                        text = FileUtils.formatFileSize(file.length()),
+                        color = Color.White.copy(alpha = 0.6f),
+                        style = MaterialTheme.typography.bodySmall
+                    )
+
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                    // Seek bar
+                    Slider(
+                        value = progressFraction,
+                        onValueChange = { fraction ->
+                            if (duration > 0) {
+                                isSeeking = true
+                                seekPosition = (fraction * duration).toLong()
                             }
-                        }
-                    },
-                    modifier = Modifier
-                        .size(76.dp)
-                        .clip(CircleShape)
-                        .background(Color(0xFFFF9800))
-                ) {
-                    Icon(
-                        imageVector = if (isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
-                        contentDescription = if (isPlaying) "Pause" else "Play",
-                        modifier = Modifier.size(42.dp),
-                        tint = Color.White
+                        },
+                        onValueChangeFinished = {
+                            controller?.let { mc ->
+                                if (duration > 0) {
+                                    try { mc.seekTo(seekPosition) } catch (_: Exception) {
+                                        try { mc.seekToDefaultPosition() } catch (_: Exception) {}
+                                    }
+                                }
+                            }
+                            isSeeking = false
+                        },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(24.dp),
+                        valueRange = 0f..1f
                     )
-                }
 
-                // Next track
-                IconButton(
-                    onClick = {
-                        controller?.let { mc ->
-                            try { mc.seekToNext() } catch (_: Exception) {}
-                        }
-                    },
-                    modifier = Modifier
-                        .size(64.dp)
-                        .clip(CircleShape)
-                        .background(Color.White.copy(alpha = 0.12f))
-                ) {
-                    Icon(
-                        imageVector = Icons.Filled.SkipNext,
-                        contentDescription = "Next",
-                        modifier = Modifier.size(36.dp),
-                        tint = Color.White
+                    // Time labels
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text(
+                            text = formatTime(currentPosition),
+                            color = Color.White.copy(alpha = 0.7f),
+                            fontSize = 12.sp
+                        )
+                        Text(
+                            text = formatTime(duration),
+                            color = Color.White.copy(alpha = 0.7f),
+                            fontSize = 12.sp
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                    // Playback controls row
+                    AudioControlsRow(
+                        isPlaying = isPlaying,
+                        repeatMode = repeatMode,
+                        onToggleRepeat = onToggleRepeat,
+                        controller = controller
                     )
                 }
             }
+        } else {
+            // ── Portrait layout: original vertical column ──
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center,
+                modifier = Modifier.padding(32.dp)
+            ) {
+                AudioAlbumArt(albumArt = albumArt, landscapeMode = false)
+
+                Spacer(modifier = Modifier.height(24.dp))
+
+                // File name
+                Text(
+                    text = file.name,
+                    color = Color.White,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    textAlign = TextAlign.Center,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                // File size
+                Text(
+                    text = FileUtils.formatFileSize(file.length()),
+                    color = Color.White.copy(alpha = 0.6f),
+                    style = MaterialTheme.typography.bodySmall
+                )
+
+                Spacer(modifier = Modifier.height(32.dp))
+
+                // Seek bar
+                Slider(
+                    value = progressFraction,
+                    onValueChange = { fraction ->
+                        if (duration > 0) {
+                            isSeeking = true
+                            seekPosition = (fraction * duration).toLong()
+                        }
+                    },
+                    onValueChangeFinished = {
+                        controller?.let { mc ->
+                            if (duration > 0) {
+                                try { mc.seekTo(seekPosition) } catch (_: Exception) {
+                                    try { mc.seekToDefaultPosition() } catch (_: Exception) {}
+                                }
+                            }
+                        }
+                        isSeeking = false
+                    },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(24.dp),
+                    valueRange = 0f..1f
+                )
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                // Time labels
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text(
+                        text = formatTime(currentPosition),
+                        color = Color.White.copy(alpha = 0.7f),
+                        fontSize = 12.sp
+                    )
+                    Text(
+                        text = formatTime(duration),
+                        color = Color.White.copy(alpha = 0.7f),
+                        fontSize = 12.sp
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(24.dp))
+
+                // Playback controls row
+                AudioControlsRow(
+                    isPlaying = isPlaying,
+                    repeatMode = repeatMode,
+                    onToggleRepeat = onToggleRepeat,
+                    controller = controller
+                )
+            }
+        }
+    }
+}
+
+/** Album art image or fallback music-note icon. */
+@Composable
+private fun AudioAlbumArt(albumArt: Bitmap?, landscapeMode: Boolean) {
+    if (albumArt != null) {
+        AsyncImage(
+            model = ImageRequest.Builder(LocalContext.current)
+                .data(albumArt)
+                .crossfade(true)
+                .build(),
+            contentDescription = "Album art",
+            modifier = if (landscapeMode) {
+                Modifier
+                    .fillMaxSize()
+                    .clip(RoundedCornerShape(16.dp))
+            } else {
+                Modifier
+                    .fillMaxWidth()
+                    .wrapContentHeight()
+                    .clip(RoundedCornerShape(12.dp))
+            },
+            contentScale = ContentScale.Fit
+        )
+    } else {
+        // Fallback audio icon when no art is embedded
+        val iconSize = if (landscapeMode) 96.dp else 64.dp
+        val boxSize = if (landscapeMode) 160.dp else 120.dp
+        Box(
+            modifier = Modifier
+                .size(boxSize)
+                .clip(RoundedCornerShape(24.dp))
+                .background(Color(0xFFFF9800).copy(alpha = 0.2f)),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                imageVector = Icons.Filled.MusicNote,
+                contentDescription = "Audio",
+                modifier = Modifier.size(iconSize),
+                tint = Color(0xFFFF9800)
+            )
+        }
+    }
+}
+
+/** Repeat · Previous · Play/Pause · Next controls row, shared by both orientations. */
+@Composable
+private fun AudioControlsRow(
+    isPlaying: Boolean,
+    repeatMode: Int,
+    onToggleRepeat: () -> Unit,
+    controller: MediaController?
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceEvenly,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        val repeatActive = repeatMode == Player.REPEAT_MODE_ONE
+
+        // Repeat toggle
+        IconButton(
+            onClick = { onToggleRepeat() },
+            modifier = Modifier
+                .size(64.dp)
+                .clip(CircleShape)
+                .background(
+                    if (repeatActive) Color(0xFFFF9800).copy(alpha = 0.25f)
+                    else Color.White.copy(alpha = 0.12f)
+                )
+        ) {
+            Icon(
+                imageVector = if (repeatActive) Icons.Filled.RepeatOne else Icons.Filled.Repeat,
+                contentDescription = "Repeat",
+                modifier = Modifier.size(32.dp),
+                tint = if (repeatActive) Color(0xFFFF9800) else Color.White
+            )
+        }
+
+        // Previous track
+        IconButton(
+            onClick = {
+                controller?.let { mc ->
+                    try { mc.seekToPrevious() } catch (_: Exception) {}
+                }
+            },
+            modifier = Modifier
+                .size(64.dp)
+                .clip(CircleShape)
+                .background(Color.White.copy(alpha = 0.12f))
+        ) {
+            Icon(
+                imageVector = Icons.Filled.SkipPrevious,
+                contentDescription = "Previous",
+                modifier = Modifier.size(36.dp),
+                tint = Color.White
+            )
+        }
+
+        // Play / Pause (primary, larger)
+        IconButton(
+            onClick = {
+                controller?.let { mc ->
+                    if (mc.isPlaying) mc.pause() else mc.playWhenReady = true
+                }
+            },
+            modifier = Modifier
+                .size(76.dp)
+                .clip(CircleShape)
+                .background(Color(0xFFFF9800))
+        ) {
+            Icon(
+                imageVector = if (isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
+                contentDescription = if (isPlaying) "Pause" else "Play",
+                modifier = Modifier.size(42.dp),
+                tint = Color.White
+            )
+        }
+
+        // Next track
+        IconButton(
+            onClick = {
+                controller?.let { mc ->
+                    try { mc.seekToNext() } catch (_: Exception) {}
+                }
+            },
+            modifier = Modifier
+                .size(64.dp)
+                .clip(CircleShape)
+                .background(Color.White.copy(alpha = 0.12f))
+        ) {
+            Icon(
+                imageVector = Icons.Filled.SkipNext,
+                contentDescription = "Next",
+                modifier = Modifier.size(36.dp),
+                tint = Color.White
+            )
         }
     }
 }

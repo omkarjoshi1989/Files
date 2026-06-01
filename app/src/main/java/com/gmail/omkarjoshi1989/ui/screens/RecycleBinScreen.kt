@@ -47,6 +47,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.gmail.omkarjoshi1989.util.FileUtils
 import com.gmail.omkarjoshi1989.util.RecycleBinItem
 import com.gmail.omkarjoshi1989.util.RecycleBinManager
 import kotlinx.coroutines.Dispatchers
@@ -250,7 +251,7 @@ private fun RecycleBinItemRow(
                     overflow = TextOverflow.Ellipsis
                 )
                 Text(
-                    "From: ${item.originalPath.substringBeforeLast("/")}",
+                    "From: ${FileUtils.toDisplayPath(item.originalPath.substringBeforeLast("/"))}",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
