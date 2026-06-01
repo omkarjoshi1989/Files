@@ -74,6 +74,8 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.layout.ContentScale
+import android.content.res.Configuration
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontWeight
@@ -148,6 +150,12 @@ fun MediaViewerScreen(
 
     val currentFile = mediaFiles.getOrNull(virtualToActual(pagerState.settledPage))
     var isImmersive by remember { mutableStateOf(false) }
+
+    // ── Swipe lock: disable left/right swipe when in landscape + video page ──
+    val configuration = LocalConfiguration.current
+    val isLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
+    val isCurrentFileVideo = currentFile != null && FileUtils.isVideoFile(currentFile)
+    val pagerScrollEnabled = !(isLandscape && isCurrentFileVideo)
 
     // ── Screen-level brightness override (shared across video pages) ────
     val screenActivity = remember(context) {
@@ -435,6 +443,7 @@ fun MediaViewerScreen(
             state = pagerState,
             modifier = Modifier.fillMaxSize(),
             beyondViewportPageCount = 0,   // prevent pre-rendering adjacent pages
+            userScrollEnabled = pagerScrollEnabled,
             key = { "${it}_${mediaFiles[virtualToActual(it)].absolutePath}" }
         ) { page ->
             val actualPage = virtualToActual(page)

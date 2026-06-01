@@ -36,6 +36,8 @@ enum class FileFilter(val label: String) {
 data class RecentFilesUiState(
     val files: List<File> = emptyList(),
     val filteredFiles: List<File> = emptyList(),
+    val displayedFiles: List<File> = emptyList(),
+    val displayedCount: Int = PAGE_SIZE,
     val isLoading: Boolean = true,
     val isRefreshing: Boolean = false,
     val totalFilesScanned: Int = 0,
@@ -46,7 +48,11 @@ data class RecentFilesUiState(
     val fileFilter: FileFilter = FileFilter.ALL,
     val operationMessage: String? = null,
     val errorMessage: String? = null
-)
+) {
+    val hasMore: Boolean get() = displayedCount < filteredFiles.size
+}
+
+private const val PAGE_SIZE = 100
 
 class RecentFilesViewModel(application: Application) : AndroidViewModel(application) {
 
@@ -71,13 +77,25 @@ class RecentFilesViewModel(application: Application) : AndroidViewModel(applicat
         super.onCleared()
     }
 
+    fun loadMore() {
+        val current = _uiState.value
+        val newCount = (current.displayedCount + PAGE_SIZE).coerceAtMost(current.filteredFiles.size)
+        _uiState.value = current.copy(
+            displayedCount = newCount,
+            displayedFiles = current.filteredFiles.take(newCount)
+        )
+    }
+
     fun updateSearchQuery(query: String) {
         val current = _uiState.value
         val filtered = applyFilter(current.files, current.fileFilter)
             .let { if (query.isBlank()) it else it.filter { f -> f.name.contains(query, ignoreCase = true) } }
+        val sorted = applySorting(filtered, current.sortOption, current.sortAscending)
         _uiState.value = current.copy(
             searchQuery = query,
-            filteredFiles = applySorting(filtered, current.sortOption, current.sortAscending)
+            filteredFiles = sorted,
+            displayedCount = PAGE_SIZE,
+            displayedFiles = sorted.take(PAGE_SIZE)
         )
     }
 
@@ -86,10 +104,13 @@ class RecentFilesViewModel(application: Application) : AndroidViewModel(applicat
         if (current.isSearchActive) {
             // Close search → clear query and reset filter
             val filtered = applyFilter(current.files, current.fileFilter)
+            val sorted = applySorting(filtered, current.sortOption, current.sortAscending)
             _uiState.value = current.copy(
                 isSearchActive = false,
                 searchQuery = "",
-                filteredFiles = applySorting(filtered, current.sortOption, current.sortAscending)
+                filteredFiles = sorted,
+                displayedCount = PAGE_SIZE,
+                displayedFiles = sorted.take(PAGE_SIZE)
             )
         } else {
             _uiState.value = current.copy(isSearchActive = true)
@@ -105,10 +126,13 @@ class RecentFilesViewModel(application: Application) : AndroidViewModel(applicat
                 SortOption.DATE, SortOption.SIZE -> false
             }
         }
+        val sorted = applySorting(current.filteredFiles, option, newAscending)
         _uiState.value = current.copy(
             sortOption = option,
             sortAscending = newAscending,
-            filteredFiles = applySorting(current.filteredFiles, option, newAscending)
+            filteredFiles = sorted,
+            displayedCount = PAGE_SIZE,
+            displayedFiles = sorted.take(PAGE_SIZE)
         )
     }
 
@@ -116,9 +140,12 @@ class RecentFilesViewModel(application: Application) : AndroidViewModel(applicat
         val current = _uiState.value
         val filtered = applyFilter(current.files, filter)
             .let { if (current.searchQuery.isBlank()) it else it.filter { f -> f.name.contains(current.searchQuery, ignoreCase = true) } }
+        val sorted = applySorting(filtered, current.sortOption, current.sortAscending)
         _uiState.value = current.copy(
             fileFilter = filter,
-            filteredFiles = applySorting(filtered, current.sortOption, current.sortAscending)
+            filteredFiles = sorted,
+            displayedCount = PAGE_SIZE,
+            displayedFiles = sorted.take(PAGE_SIZE)
         )
     }
 
@@ -191,9 +218,12 @@ class RecentFilesViewModel(application: Application) : AndroidViewModel(applicat
                 val current = _uiState.value
                 val filtered = applyFilter(files, current.fileFilter)
                     .let { if (current.searchQuery.isBlank()) it else it.filter { f -> f.name.contains(current.searchQuery, ignoreCase = true) } }
+                val sorted = applySorting(filtered, current.sortOption, current.sortAscending)
                 _uiState.value = current.copy(
                     files = files,
-                    filteredFiles = applySorting(filtered, current.sortOption, current.sortAscending),
+                    filteredFiles = sorted,
+                    displayedCount = PAGE_SIZE,
+                    displayedFiles = sorted.take(PAGE_SIZE),
                     isLoading = false,
                     totalFilesScanned = files.size
                 )
@@ -201,7 +231,8 @@ class RecentFilesViewModel(application: Application) : AndroidViewModel(applicat
                 _uiState.value = _uiState.value.copy(
                     isLoading = false,
                     files = emptyList(),
-                    filteredFiles = emptyList()
+                    filteredFiles = emptyList(),
+                    displayedFiles = emptyList()
                 )
             }
         }
@@ -217,9 +248,12 @@ class RecentFilesViewModel(application: Application) : AndroidViewModel(applicat
                 val current = _uiState.value
                 val filtered = applyFilter(files, current.fileFilter)
                     .let { if (current.searchQuery.isBlank()) it else it.filter { f -> f.name.contains(current.searchQuery, ignoreCase = true) } }
+                val sorted = applySorting(filtered, current.sortOption, current.sortAscending)
                 _uiState.value = current.copy(
                     files = files,
-                    filteredFiles = applySorting(filtered, current.sortOption, current.sortAscending),
+                    filteredFiles = sorted,
+                    displayedCount = PAGE_SIZE,
+                    displayedFiles = sorted.take(PAGE_SIZE),
                     isRefreshing = false,
                     totalFilesScanned = files.size
                 )
@@ -239,9 +273,14 @@ class RecentFilesViewModel(application: Application) : AndroidViewModel(applicat
                 val current = _uiState.value
                 val filtered = applyFilter(files, current.fileFilter)
                     .let { if (current.searchQuery.isBlank()) it else it.filter { f -> f.name.contains(current.searchQuery, ignoreCase = true) } }
+                val sorted = applySorting(filtered, current.sortOption, current.sortAscending)
+                // Keep same displayed count (don't reset pagination on refresh-after-rename)
+                val keepCount = current.displayedCount.coerceAtMost(sorted.size)
                 _uiState.value = current.copy(
                     files = files,
-                    filteredFiles = applySorting(filtered, current.sortOption, current.sortAscending),
+                    filteredFiles = sorted,
+                    displayedCount = keepCount,
+                    displayedFiles = sorted.take(keepCount),
                     isRefreshing = false,
                     totalFilesScanned = files.size
                 )

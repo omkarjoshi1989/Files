@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.material3.Button
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Apps
@@ -311,7 +312,7 @@ fun RecentFilesScreen(
                 }
             } else {
                 LazyColumn(modifier = Modifier.fillMaxSize()) {
-                    items(uiState.filteredFiles, key = { it.absolutePath }) { file ->
+                    items(uiState.displayedFiles, key = { it.absolutePath }) { file ->
                         RecentFileItem(
                             file = file,
                             isFavorite = file.absolutePath in favoritePaths,
@@ -321,6 +322,22 @@ fun RecentFilesScreen(
                                 showBottomSheet = true
                             }
                         )
+                    }
+                    if (uiState.hasMore) {
+                        item(key = "load_more_button") {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(16.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Button(onClick = { viewModel.loadMore() }) {
+                                    Text(
+                                        text = "Load More (${uiState.filteredFiles.size - uiState.displayedCount} remaining)"
+                                    )
+                                }
+                            }
+                        }
                     }
                 }
             }
