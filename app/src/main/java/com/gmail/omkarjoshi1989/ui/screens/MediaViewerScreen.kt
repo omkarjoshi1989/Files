@@ -33,6 +33,9 @@ import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Repeat
 import androidx.compose.material.icons.filled.RepeatOne
+import androidx.compose.material.icons.filled.SkipNext
+import androidx.compose.material.icons.filled.SkipPrevious
+import androidx.compose.foundation.shape.CircleShape
 // Shuffle removed: no import
 import androidx.compose.material3.Slider
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -739,48 +742,96 @@ private fun AudioPage(
             }
 
             Spacer(modifier = Modifier.height(24.dp))
-            // Repeat controls (default: repeat all songs; toggle to repeat one)
+            // Playback controls: Repeat · Previous · Play/Pause · Next — all circular, in one row
             Row(
-                horizontalArrangement = Arrangement.Center,
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.fillMaxWidth()
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceEvenly,
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                // Repeat: toggle between all -> one
-                IconButton(onClick = { onToggleRepeat() }) {
-                    val tint = if (repeatMode == Player.REPEAT_MODE_ONE) Color(0xFFFF9800) else Color.White.copy(alpha = 0.7f)
+                val repeatActive = repeatMode == Player.REPEAT_MODE_ONE
+
+                // Repeat toggle (circular, sized like skip buttons)
+                IconButton(
+                    onClick = { onToggleRepeat() },
+                    modifier = Modifier
+                        .size(64.dp)
+                        .clip(CircleShape)
+                        .background(
+                            if (repeatActive) Color(0xFFFF9800).copy(alpha = 0.25f)
+                            else Color.White.copy(alpha = 0.12f)
+                        )
+                ) {
                     Icon(
-                        imageVector = if (repeatMode == Player.REPEAT_MODE_ONE) Icons.Filled.RepeatOne else Icons.Filled.Repeat,
+                        imageVector = if (repeatActive) Icons.Filled.RepeatOne else Icons.Filled.Repeat,
                         contentDescription = "Repeat",
-                        tint = tint
+                        modifier = Modifier.size(32.dp),
+                        tint = if (repeatActive) Color(0xFFFF9800) else Color.White
                     )
                 }
-                Spacer(modifier = Modifier.width(24.dp))
-            }
 
-            Spacer(modifier = Modifier.height(8.dp))
-
-            // Play/Pause button
-            IconButton(
-                onClick = {
-                    controller?.let { mc ->
-                        if (mc.isPlaying) {
-                            mc.pause()
-                        } else {
-                            mc.playWhenReady = true
+                // Previous track
+                IconButton(
+                    onClick = {
+                        controller?.let { mc ->
+                            try { mc.seekToPrevious() } catch (_: Exception) {}
                         }
-                    }
-                },
-                modifier = Modifier
-                    .size(64.dp)
-                    .clip(RoundedCornerShape(32.dp))
-                    .background(Color(0xFFFF9800))
-            ) {
-                Icon(
-                    imageVector = if (isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
-                    contentDescription = if (isPlaying) "Pause" else "Play",
-                    modifier = Modifier.size(36.dp),
-                    tint = Color.White
-                )
+                    },
+                    modifier = Modifier
+                        .size(64.dp)
+                        .clip(CircleShape)
+                        .background(Color.White.copy(alpha = 0.12f))
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.SkipPrevious,
+                        contentDescription = "Previous",
+                        modifier = Modifier.size(36.dp),
+                        tint = Color.White
+                    )
+                }
+
+                // Play / Pause (primary, larger)
+                IconButton(
+                    onClick = {
+                        controller?.let { mc ->
+                            if (mc.isPlaying) {
+                                mc.pause()
+                            } else {
+                                mc.playWhenReady = true
+                            }
+                        }
+                    },
+                    modifier = Modifier
+                        .size(76.dp)
+                        .clip(CircleShape)
+                        .background(Color(0xFFFF9800))
+                ) {
+                    Icon(
+                        imageVector = if (isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
+                        contentDescription = if (isPlaying) "Pause" else "Play",
+                        modifier = Modifier.size(42.dp),
+                        tint = Color.White
+                    )
+                }
+
+                // Next track
+                IconButton(
+                    onClick = {
+                        controller?.let { mc ->
+                            try { mc.seekToNext() } catch (_: Exception) {}
+                        }
+                    },
+                    modifier = Modifier
+                        .size(64.dp)
+                        .clip(CircleShape)
+                        .background(Color.White.copy(alpha = 0.12f))
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.SkipNext,
+                        contentDescription = "Next",
+                        modifier = Modifier.size(36.dp),
+                        tint = Color.White
+                    )
+                }
             }
         }
     }
