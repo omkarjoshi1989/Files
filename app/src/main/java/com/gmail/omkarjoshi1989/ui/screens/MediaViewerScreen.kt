@@ -228,6 +228,13 @@ fun MediaViewerScreen(
     var playerTrackIndex by remember { mutableIntStateOf(-1) }
     // Whether we have already loaded our playlist into the service player.
     var playlistLoaded by remember { mutableStateOf(false) }
+    // True while the pager is being scrolled programmatically (due to a player
+    // track auto-advance).  Prevents snapshotFlow from calling syncAudioToPage
+    // and seeking the player backward to an intermediate/stale page.
+    var isProgrammaticPagerScroll by remember { mutableStateOf(false) }
+    // Incremented on ON_RESUME to trigger an instant pager snap when the pager
+    // is stale (animations couldn't run while the screen was off).
+    var resumeSyncNeeded by remember { mutableStateOf(false) }
 
     // Build MediaItem list once (stable across recompositions)
     val audioMediaItems = remember(mediaFiles, audioPageIndices) {
@@ -318,8 +325,11 @@ fun MediaViewerScreen(
     // can call the same logic without duplication.
     fun syncAudioToPage(mc: MediaController, page: Int) {
         val playlistIdx = pageToPlaylistIndex[page] ?: return
-        if (!playlistLoaded) {
-            // First time landing on audio — load the full playlist at the correct track
+        // Treat the playlist as unloaded if either we haven't loaded it yet, OR
+        // the service was killed while the screen was off/idle (mediaItemCount == 0).
+        val needsReload = !playlistLoaded || mc.mediaItemCount == 0
+        if (needsReload) {
+            // First time landing on audio, or service was restarted — reload playlist
             mc.setMediaItems(audioMediaItems, playlistIdx, 0L)
             mc.prepare()
             // Do not override existing repeatMode here; the UI's hoisted `repeatMode`
@@ -333,13 +343,45 @@ fun MediaViewerScreen(
             mc.play()                      // ← auto-play on swipe
             playerTrackIndex = playlistIdx
         } else if (!mc.isPlaying) {
-            // Same track but paused (e.g. swiped away to image then back)
-            mc.play()
+            // Same track but paused (e.g. swiped away to image then back,
+            // or player reached STATE_IDLE/STATE_ENDED after long idle).
+            when (mc.playbackState) {
+                Player.STATE_IDLE -> { mc.prepare(); mc.play() }
+                Player.STATE_ENDED -> { mc.seekToDefaultPosition(playlistIdx); mc.play() }
+                else -> mc.play()
+            }
         }
         // Sync UI immediately
         isAudioPlaying = mc.isPlaying
         audioDuration = if (mc.duration > 0) mc.duration else 0L
         audioPosition = mc.currentPosition
+    }
+
+    // ── Helper: resume/play current audio, recovering from service kill ─────
+    fun playCurrentAudio() {
+        val mc = musicController ?: return
+        val actualPage = virtualToActual(pagerState.settledPage)
+        val playlistIdx = pageToPlaylistIndex[actualPage] ?: return
+        when {
+            mc.mediaItemCount == 0 || !playlistLoaded -> {
+                // Service was killed (no media items) or never loaded — reload playlist,
+                // resuming from the last known position so the user doesn't lose progress.
+                mc.setMediaItems(audioMediaItems, playlistIdx, audioPosition.coerceAtLeast(0L))
+                mc.prepare()
+                mc.play()
+                playlistLoaded = true
+                playerTrackIndex = playlistIdx
+            }
+            mc.playbackState == Player.STATE_ENDED -> {
+                mc.seekToDefaultPosition(playlistIdx)
+                mc.play()
+            }
+            mc.playbackState == Player.STATE_IDLE -> {
+                mc.prepare()
+                mc.play()
+            }
+            else -> mc.play()
+        }
     }
 
     // ── Pager page settled → seek player or pause ────────────────────────
@@ -353,8 +395,19 @@ fun MediaViewerScreen(
 
             val playlistIdx = pageToPlaylistIndex[actualPage]
             if (playlistIdx != null) {
-                // Landed on an audio page
-                musicController?.let { mc -> syncAudioToPage(mc, actualPage) }
+                if (!isProgrammaticPagerScroll) {
+                    // User-initiated swipe: seek the player to the new page's track.
+                    musicController?.let { mc -> syncAudioToPage(mc, actualPage) }
+                } else {
+                    // Programmatic scroll (player auto-advanced to next track):
+                    // Do NOT seek the player — it is already on the correct track.
+                    // Only refresh the UI position/duration state.
+                    musicController?.let { mc ->
+                        isAudioPlaying = mc.isPlaying
+                        if (mc.duration > 0) audioDuration = mc.duration
+                        audioPosition = mc.currentPosition
+                    }
+                }
             } else {
                 // Non-audio page — pause audio if playing
                 musicController?.let { mc ->
@@ -383,14 +436,24 @@ fun MediaViewerScreen(
             if (targetActualPage != null) {
                 val currentActualPage = virtualToActual(pagerState.settledPage)
                 if (currentActualPage != targetActualPage) {
-                    if (loopEnabled && actualCount > 1) {
-                        // Calculate the nearest virtual page for the target actual page
-                        val currentVirtual = pagerState.settledPage
-                        val currentOffset = currentVirtual - currentActualPage
-                        val targetVirtual = currentOffset + targetActualPage
-                        pagerState.animateScrollToPage(targetVirtual)
-                    } else {
-                        pagerState.animateScrollToPage(targetActualPage)
+                    // Mark as programmatic so snapshotFlow won't re-seek the player
+                    // backward when the pager settles (including on a cancelled animation).
+                    isProgrammaticPagerScroll = true
+                    try {
+                        if (loopEnabled && actualCount > 1) {
+                            // Calculate the nearest virtual page for the target actual page
+                            val currentVirtual = pagerState.settledPage
+                            val currentOffset = currentVirtual - currentActualPage
+                            val targetVirtual = currentOffset + targetActualPage
+                            pagerState.animateScrollToPage(targetVirtual)
+                        } else {
+                            pagerState.animateScrollToPage(targetActualPage)
+                        }
+                    } finally {
+                        // Always clear the flag — both on successful completion and
+                        // on cancellation (when the next track fires before this
+                        // animation finishes).  The next LaunchedEffect will re-set it.
+                        isProgrammaticPagerScroll = false
                     }
                 }
             }
@@ -403,6 +466,67 @@ fun MediaViewerScreen(
         while (musicController != null) {
             musicController?.let { audioPosition = it.currentPosition; audioDuration = if (it.duration > 0) it.duration else audioDuration }
             delay(500)
+        }
+    }
+
+    // ── Re-sync state after screen unlock / returning from background ─────
+    // When the screen turns off and back on (or the app is resumed from background),
+    // the player state may have drifted (e.g. service killed, audio focus lost).
+    // This observer catches ON_RESUME to refresh all UI state and mark the playlist
+    // as needing a reload if the service was killed (mediaItemCount == 0).
+    if (hasAudioFiles) {
+        val lifecycleOwner = LocalLifecycleOwner.current
+        DisposableEffect(lifecycleOwner) {
+            val observer = LifecycleEventObserver { _, event ->
+                if (event == Lifecycle.Event.ON_RESUME) {
+                    val mc = musicController ?: return@LifecycleEventObserver
+                    // Refresh UI state from the actual player
+                    isAudioPlaying = mc.isPlaying
+                    if (mc.duration > 0) audioDuration = mc.duration
+                    audioPosition = mc.currentPosition
+                    // If service was killed (player has no media items), mark playlist as
+                    // unloaded so the next play press (or syncAudioToPage call) reloads it.
+                    if (mc.mediaItemCount == 0) {
+                        playlistLoaded = false
+                    } else {
+                        // Pager may be stale: animations don't run with screen off, so
+                        // settledPage might still point at the track that was playing when
+                        // the screen turned off.  Request an instant snap to the correct page.
+                        val currentActualPage = virtualToActual(pagerState.settledPage)
+                        val expectedPage = playlistToPageIndex[mc.currentMediaItemIndex]
+                        if (expectedPage != null && currentActualPage != expectedPage) {
+                            resumeSyncNeeded = !resumeSyncNeeded  // toggle to trigger LaunchedEffect
+                        }
+                    }
+                }
+            }
+            lifecycleOwner.lifecycle.addObserver(observer)
+            onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+        }
+    }
+
+    // ── Instantly snap the pager to the player's current track on resume ──
+    // Runs whenever resumeSyncNeeded flips, which means the screen just came
+    // back on and the pager is pointing at a stale track.
+    if (hasAudioFiles) {
+        LaunchedEffect(resumeSyncNeeded) {
+            val mc = musicController ?: return@LaunchedEffect
+            val targetActualPage = playlistToPageIndex[mc.currentMediaItemIndex]
+                ?: return@LaunchedEffect
+            val currentActualPage = virtualToActual(pagerState.settledPage)
+            if (currentActualPage != targetActualPage) {
+                val targetVirtual = if (loopEnabled && actualCount > 1) {
+                    pagerState.settledPage - currentActualPage + targetActualPage
+                } else targetActualPage
+                isProgrammaticPagerScroll = true
+                try {
+                    // scrollToPage = instant snap (no animation); avoids the
+                    // jerky "catch-up" animation that would otherwise play.
+                    pagerState.scrollToPage(targetVirtual)
+                } finally {
+                    isProgrammaticPagerScroll = false
+                }
+            }
         }
     }
 
@@ -463,22 +587,26 @@ fun MediaViewerScreen(
                     onBrightnessChange = { screenBrightness = it.coerceIn(0f, 1f) },
                     onImmersiveChange = { immersive -> isImmersive = immersive }
                 )
-                FileUtils.isAudioFile(file) -> AudioPage(
-                    file = file,
-                    controller = musicController,
-                    isPlaying = isAudioPlaying && isCurrentPage,
-                    currentPosition = if (isCurrentPage) audioPosition else 0L,
-                    duration = if (isCurrentPage) audioDuration else 0L,
-                    repeatMode = repeatMode,
-                    onToggleRepeat = {
-                        val next = if (repeatMode == Player.REPEAT_MODE_ONE) Player.REPEAT_MODE_ALL else Player.REPEAT_MODE_ONE
-                        repeatMode = next
-                        musicController?.let { mc ->
-                            try { mc.repeatMode = next } catch (_: Exception) { try { mc.setRepeatMode(next) } catch (_: Exception) {} }
-                        }
-                    },
-                    onTap = { isImmersive = !isImmersive }
-                )
+                                FileUtils.isAudioFile(file) -> AudioPage(
+                                    file = file,
+                                    controller = musicController,
+                                    isPlaying = isAudioPlaying && isCurrentPage,
+                                    currentPosition = if (isCurrentPage) audioPosition else 0L,
+                                    duration = if (isCurrentPage) audioDuration else 0L,
+                                    repeatMode = repeatMode,
+                                    onToggleRepeat = {
+                                        val next = if (repeatMode == Player.REPEAT_MODE_ONE) Player.REPEAT_MODE_ALL else Player.REPEAT_MODE_ONE
+                                        repeatMode = next
+                                        musicController?.let { mc ->
+                                            try { mc.repeatMode = next } catch (_: Exception) { try { mc.setRepeatMode(next) } catch (_: Exception) {} }
+                                        }
+                                    },
+                                    onPlayPause = {
+                                        if (musicController?.isPlaying == true) musicController?.pause()
+                                        else playCurrentAudio()
+                                    },
+                                    onTap = { isImmersive = !isImmersive }
+                                )
             }
         }
 
@@ -947,6 +1075,7 @@ private fun AudioPage(
     duration: Long,
     repeatMode: Int,
     onToggleRepeat: () -> Unit,
+    onPlayPause: () -> Unit,
     onTap: () -> Unit
 ) {
     val configuration = LocalConfiguration.current
@@ -1072,17 +1201,18 @@ private fun AudioPage(
 
                     Spacer(modifier = Modifier.height(16.dp))
 
-                    // Playback controls row
-                    AudioControlsRow(
-                        isPlaying = isPlaying,
-                        repeatMode = repeatMode,
-                        onToggleRepeat = onToggleRepeat,
-                        controller = controller
-                    )
-                }
-            }
-        } else {
-            // ── Portrait layout: original vertical column ──
+                                    // Playback controls row
+                                    AudioControlsRow(
+                                        isPlaying = isPlaying,
+                                        repeatMode = repeatMode,
+                                        onToggleRepeat = onToggleRepeat,
+                                        onPlayPause = onPlayPause,
+                                        controller = controller
+                                    )
+                                }
+                            }
+                        } else {
+                            // ── Portrait layout: original vertical column ──
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.Center,
@@ -1165,6 +1295,7 @@ private fun AudioPage(
                     isPlaying = isPlaying,
                     repeatMode = repeatMode,
                     onToggleRepeat = onToggleRepeat,
+                    onPlayPause = onPlayPause,
                     controller = controller
                 )
             }
@@ -1221,6 +1352,7 @@ private fun AudioControlsRow(
     isPlaying: Boolean,
     repeatMode: Int,
     onToggleRepeat: () -> Unit,
+    onPlayPause: () -> Unit,
     controller: MediaController?
 ) {
     Row(
@@ -1271,11 +1403,7 @@ private fun AudioControlsRow(
 
         // Play / Pause (primary, larger)
         IconButton(
-            onClick = {
-                controller?.let { mc ->
-                    if (mc.isPlaying) mc.pause() else mc.playWhenReady = true
-                }
-            },
+            onClick = { onPlayPause() },
             modifier = Modifier
                 .size(76.dp)
                 .clip(CircleShape)

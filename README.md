@@ -109,6 +109,4 @@
 | 7 | Group photos by Date (Today, Yesterday, Month)   | Pending |       |
 
 ## Issues observed
-| # | Issue                                                            | Status  | Resolution                                                                                  |
-|---|------------------------------------------------------------------|---------|---------------------------------------------------------------------------------------------|
-inside all files activity DONT SHOW '/storage/emulated/0' in files path e.g. file path can be as Picture/Instragram instead of full and complete path
+2. after long time idle on music player screen, if tried to reinterct with play button music wont resunme. Also long time if app stays under  screen turn off with music player screen opened after screen unlock, then also music wont resume playinग् 

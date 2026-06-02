@@ -4,13 +4,11 @@ import android.content.Intent
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -19,9 +17,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.grid.GridCells
-import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
-import androidx.compose.foundation.lazy.grid.items as gridItems
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -58,47 +53,64 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
 
-/**
- * Data class representing a folder that contains at least one audio file.
- */
-private data class AudioFolder(
-    val folder: File,
-    val audioFileCount: Int,
-    val firstAudioFile: File
-)
+/** A single item shown in the explorer: either a navigable folder or an audio file. */
+private sealed class AudioExplorerItem {
+    data class Folder(val dir: File, val audioCount: Int) : AudioExplorerItem()
+    data class AudioFile(val file: File) : AudioExplorerItem()
+}
 
 /**
- * Recursively scans [root] and collects every unique folder that
- * directly contains at least one audio file.  Sub-folders are visited
- * for discovery, but only the immediate parent of each audio file is
- * recorded (no "subfolder strategy").
+ * Returns true if [dir] or any of its subdirectories (recursively)
+ * contains at least one audio file.
  */
-private suspend fun findAudioFolders(root: File): List<AudioFolder> =
+private fun folderHasAudio(dir: File): Boolean {
+    val children = dir.listFiles() ?: return false
+    for (child in children) {
+        if (child.isFile && FileUtils.isAudioFile(child)) return true
+        if (child.isDirectory && !child.name.startsWith(".") && folderHasAudio(child)) return true
+    }
+    return false
+}
+
+/**
+ * Counts audio files recursively under [dir].
+ */
+private fun countAudioFilesRecursive(dir: File): Int {
+    val children = dir.listFiles() ?: return 0
+    var count = 0
+    for (child in children) {
+        if (child.isFile && FileUtils.isAudioFile(child)) count++
+        else if (child.isDirectory && !child.name.startsWith(".")) count += countAudioFilesRecursive(child)
+    }
+    return count
+}
+
+/**
+ * Returns the direct contents of [dir]:
+ * - Sub-folders that contain audio files anywhere in their subtree (sorted by name)
+ * - Audio files directly inside [dir] (sorted by name)
+ */
+private suspend fun getExplorerItems(dir: File): List<AudioExplorerItem> =
     withContext(Dispatchers.IO) {
-        val folderMap = mutableMapOf<String, MutableList<File>>()
+        val children = dir.listFiles() ?: return@withContext emptyList()
+        val folders = mutableListOf<AudioExplorerItem.Folder>()
+        val audioFiles = mutableListOf<AudioExplorerItem.AudioFile>()
 
-        fun scan(dir: File) {
-            val children = dir.listFiles() ?: return
-            for (child in children) {
-                when {
-                    child.isFile && FileUtils.isAudioFile(child) -> {
-                        folderMap.getOrPut(dir.absolutePath) { mutableListOf() }.add(child)
+        for (child in children) {
+            when {
+                child.isDirectory && !child.name.startsWith(".") -> {
+                    if (folderHasAudio(child)) {
+                        folders.add(AudioExplorerItem.Folder(child, countAudioFilesRecursive(child)))
                     }
-                    child.isDirectory && !child.name.startsWith(".") -> scan(child)
+                }
+                child.isFile && FileUtils.isAudioFile(child) -> {
+                    audioFiles.add(AudioExplorerItem.AudioFile(child))
                 }
             }
         }
 
-        scan(root)
-
-        folderMap.map { (path, files) ->
-            val sortedFiles = files.sortedBy { it.name.lowercase() }
-            AudioFolder(
-                folder = File(path),
-                audioFileCount = sortedFiles.size,
-                firstAudioFile = sortedFiles.first()
-            )
-        }.sortedBy { it.folder.name.lowercase() }
+        folders.sortedBy { it.dir.name.lowercase() } +
+                audioFiles.sortedBy { it.file.name.lowercase() }
     }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -106,135 +118,55 @@ private suspend fun findAudioFolders(root: File): List<AudioFolder> =
 fun AudioFoldersScreen(
     onNavigateBack: () -> Unit
 ) {
-    var isLoading by remember { mutableStateOf(true) }
-    var audioFolders by remember { mutableStateOf<List<AudioFolder>>(emptyList()) }
-    // Tracks which folder the user has drilled into (null = show folder grid)
-    var selectedFolder by remember { mutableStateOf<AudioFolder?>(null) }
+    val storageRoot = remember { android.os.Environment.getExternalStorageDirectory() }
 
-    // Scan storage on first composition
-    LaunchedEffect(Unit) {
-        val internalStorage = android.os.Environment.getExternalStorageDirectory()
-        audioFolders = findAudioFolders(internalStorage)
+    // Navigation stack: list of directories the user has entered.
+    // The last entry is the current directory.
+    var directoryStack by remember { mutableStateOf(listOf(storageRoot)) }
+    val currentDir = directoryStack.last()
+
+    var isLoading by remember { mutableStateOf(true) }
+    var explorerItems by remember { mutableStateOf<List<AudioExplorerItem>>(emptyList()) }
+
+    // Reload whenever the current directory changes
+    LaunchedEffect(currentDir.absolutePath) {
+        isLoading = true
+        explorerItems = getExplorerItems(currentDir)
         isLoading = false
     }
 
-    if (selectedFolder != null) {
-        // Hardware-back from folder contents → return to folder list
-        BackHandler { selectedFolder = null }
-        AudioFolderContentsScreen(
-            audioFolder = selectedFolder!!,
-            onNavigateBack = { selectedFolder = null }
-        )
-    } else {
-        // ── Folder grid ──────────────────────────────────────────────────
-        Scaffold(
-            topBar = {
-                TopAppBar(
-                    title = {
-                        Text(
-                            text = "Music",
-                            fontWeight = FontWeight.Bold
-                        )
-                    },
-                    navigationIcon = {
-                        IconButton(onClick = onNavigateBack) {
-                            Icon(
-                                Icons.AutoMirrored.Filled.ArrowBack,
-                                contentDescription = "Back"
-                            )
-                        }
-                    },
-                    colors = TopAppBarDefaults.topAppBarColors(
-                        containerColor = MaterialTheme.colorScheme.primaryContainer,
-                        titleContentColor = MaterialTheme.colorScheme.onPrimaryContainer,
-                        navigationIconContentColor = MaterialTheme.colorScheme.onPrimaryContainer
-                    )
-                )
-            }
-        ) { innerPadding ->
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(innerPadding)
-            ) {
-                when {
-                    isLoading -> {
-                        CircularProgressIndicator(modifier = Modifier.align(Alignment.Center))
-                    }
-                    audioFolders.isEmpty() -> {
-                        Text(
-                            text = "No audio files found on your device",
-                            modifier = Modifier
-                                .align(Alignment.Center)
-                                .padding(32.dp),
-                            style = MaterialTheme.typography.bodyLarge,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            textAlign = TextAlign.Center
-                        )
-                    }
-                    else -> {
-                        LazyVerticalGrid(
-                            columns = GridCells.Fixed(3),
-                            modifier = Modifier.fillMaxSize(),
-                            contentPadding = PaddingValues(12.dp),
-                            horizontalArrangement = Arrangement.spacedBy(10.dp),
-                            verticalArrangement = Arrangement.spacedBy(10.dp)
-                        ) {
-                            gridItems(audioFolders, key = { it.folder.absolutePath }) { audioFolder ->
-                                AudioFolderItem(
-                                    audioFolder = audioFolder,
-                                    onClick = { selectedFolder = audioFolder }
-                                )
-                            }
-                        }
-                    }
-                }
-            }
+    val canGoUp = directoryStack.size > 1
+
+    if (canGoUp) {
+        BackHandler {
+            directoryStack = directoryStack.dropLast(1)
         }
     }
-}
 
-// ── Folder contents screen ────────────────────────────────────────────────────
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun AudioFolderContentsScreen(
-    audioFolder: AudioFolder,
-    onNavigateBack: () -> Unit
-) {
     val context = LocalContext.current
-    var audioFiles by remember { mutableStateOf<List<File>>(emptyList()) }
-    var isLoading by remember { mutableStateOf(true) }
 
-    LaunchedEffect(audioFolder.folder.absolutePath) {
-        audioFiles = withContext(Dispatchers.IO) {
-            FileUtils.getAudioFilesInFolder(context, audioFolder.folder)
-        }
-        isLoading = false
-    }
+    // Compute a friendly title
+    val title = if (directoryStack.size == 1) "Music" else currentDir.name
 
     Scaffold(
         topBar = {
             TopAppBar(
                 title = {
-                    Column {
-                        Text(
-                            text = audioFolder.folder.name,
-                            fontWeight = FontWeight.Bold,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                        if (!isLoading) {
-                            Text(
-                                text = "${audioFiles.size} song${if (audioFiles.size != 1) "s" else ""}",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
-                            )
-                        }
-                    }
+                    Text(
+                        text = title,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
                 },
                 navigationIcon = {
-                    IconButton(onClick = onNavigateBack) {
+                    IconButton(onClick = {
+                        if (canGoUp) {
+                            directoryStack = directoryStack.dropLast(1)
+                        } else {
+                            onNavigateBack()
+                        }
+                    }) {
                         Icon(
                             Icons.AutoMirrored.Filled.ArrowBack,
                             contentDescription = "Back"
@@ -258,9 +190,12 @@ private fun AudioFolderContentsScreen(
                 isLoading -> {
                     CircularProgressIndicator(modifier = Modifier.align(Alignment.Center))
                 }
-                audioFiles.isEmpty() -> {
+                explorerItems.isEmpty() -> {
                     Text(
-                        text = "No audio files found in this folder",
+                        text = if (directoryStack.size == 1)
+                            "No audio files found on your device"
+                        else
+                            "No audio files found in this folder",
                         modifier = Modifier
                             .align(Alignment.Center)
                             .padding(32.dp),
@@ -274,23 +209,41 @@ private fun AudioFolderContentsScreen(
                         modifier = Modifier.fillMaxSize(),
                         contentPadding = PaddingValues(vertical = 8.dp)
                     ) {
-                        items(audioFiles, key = { it.absolutePath }) { file ->
-                            AudioFileItem(
-                                file = file,
-                                onClick = {
-                                    val intent = Intent(context, MediaViewerActivity::class.java).apply {
-                                        putExtra(
-                                            MediaViewerActivity.EXTRA_FOLDER_PATH,
-                                            audioFolder.folder.absolutePath
-                                        )
-                                        putExtra(
-                                            MediaViewerActivity.EXTRA_FILE_PATH,
-                                            file.absolutePath
-                                        )
-                                    }
-                                    context.startActivity(intent)
+                        items(explorerItems, key = { item ->
+                            when (item) {
+                                is AudioExplorerItem.Folder -> "dir:${item.dir.absolutePath}"
+                                is AudioExplorerItem.AudioFile -> "file:${item.file.absolutePath}"
+                            }
+                        }) { item ->
+                            when (item) {
+                                is AudioExplorerItem.Folder -> {
+                                    ExplorerFolderItem(
+                                        dir = item.dir,
+                                        audioCount = item.audioCount,
+                                        onClick = {
+                                            directoryStack = directoryStack + item.dir
+                                        }
+                                    )
                                 }
-                            )
+                                is AudioExplorerItem.AudioFile -> {
+                                    AudioFileItem(
+                                        file = item.file,
+                                        onClick = {
+                                            val intent = Intent(context, MediaViewerActivity::class.java).apply {
+                                                putExtra(
+                                                    MediaViewerActivity.EXTRA_FOLDER_PATH,
+                                                    currentDir.absolutePath
+                                                )
+                                                putExtra(
+                                                    MediaViewerActivity.EXTRA_FILE_PATH,
+                                                    item.file.absolutePath
+                                                )
+                                            }
+                                            context.startActivity(intent)
+                                        }
+                                    )
+                                }
+                            }
                             HorizontalDivider(
                                 modifier = Modifier.padding(start = 72.dp),
                                 thickness = 0.5.dp,
@@ -304,6 +257,61 @@ private fun AudioFolderContentsScreen(
     }
 }
 
+// ── Row item for a navigable sub-folder ──────────────────────────────────────
+
+@Composable
+private fun ExplorerFolderItem(
+    dir: File,
+    audioCount: Int,
+    onClick: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(horizontal = 16.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(
+            modifier = Modifier
+                .size(48.dp)
+                .clip(RoundedCornerShape(10.dp))
+                .background(MaterialTheme.colorScheme.primaryContainer),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                imageVector = Icons.Filled.Folder,
+                contentDescription = null,
+                modifier = Modifier.size(28.dp),
+                tint = MaterialTheme.colorScheme.onPrimaryContainer
+            )
+        }
+
+        Spacer(modifier = Modifier.width(14.dp))
+
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = dir.name,
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.Medium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            Spacer(modifier = Modifier.height(2.dp))
+            Text(
+                text = "$audioCount song${if (audioCount != 1) "s" else ""}",
+                style = MaterialTheme.typography.bodySmall,
+                fontSize = 11.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+    }
+}
+
+// ── Row item for a single audio file ─────────────────────────────────────────
+
 @Composable
 private fun AudioFileItem(
     file: File,
@@ -316,7 +324,6 @@ private fun AudioFileItem(
             .padding(horizontal = 16.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        // Music note icon with orange tinted background (matching audio style)
         Box(
             modifier = Modifier
                 .size(48.dp)
@@ -354,59 +361,3 @@ private fun AudioFileItem(
         }
     }
 }
-
-@Composable
-private fun AudioFolderItem(
-    audioFolder: AudioFolder,
-    onClick: () -> Unit
-) {
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(12.dp))
-            .clickable(onClick = onClick)
-            .padding(4.dp),
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
-        // Folder icon box
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .aspectRatio(1f)
-                .clip(RoundedCornerShape(12.dp))
-                .background(MaterialTheme.colorScheme.secondaryContainer),
-            contentAlignment = Alignment.Center
-        ) {
-            Icon(
-                imageVector = Icons.Filled.Folder,
-                contentDescription = null,
-                modifier = Modifier.size(48.dp),
-                tint = MaterialTheme.colorScheme.onSecondaryContainer
-            )
-        }
-
-        Spacer(modifier = Modifier.height(6.dp))
-
-        // Folder name
-        Text(
-            text = audioFolder.folder.name,
-            style = MaterialTheme.typography.bodySmall,
-            fontWeight = FontWeight.Medium,
-            maxLines = 2,
-            overflow = TextOverflow.Ellipsis,
-            textAlign = TextAlign.Center,
-            modifier = Modifier.fillMaxWidth()
-        )
-
-        // Audio file count
-        Text(
-            text = "${audioFolder.audioFileCount} song${if (audioFolder.audioFileCount != 1) "s" else ""}",
-            style = MaterialTheme.typography.bodySmall,
-            fontSize = 11.sp,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            textAlign = TextAlign.Center,
-            modifier = Modifier.fillMaxWidth()
-        )
-    }
-}
-
