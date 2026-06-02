@@ -65,7 +65,7 @@
 | # | Feature                                      | Status  | Notes |
 |---|----------------------------------------------|---------|-------|
 | 3 | Extract APK from installed apps (App Backup) | Pending |       |
-| 5 | Open app settings from long press            | Pending |       |
+| 5 | Open app settings from long press            | ✅ Done  |       |
 | 6 | Share APK file via Bluetooth/Apps            | Pending |       |
 
 ## Security & Authentication

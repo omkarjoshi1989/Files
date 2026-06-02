@@ -59,7 +59,24 @@
             <intent-filter>
                 <action android:name="androidx.media3.session.MediaSessionService" />
             </intent-filter>
+            <!-- Required so the OS can route media buttons back to this service after process death -->
+            <intent-filter>
+                <action android:name="android.intent.action.MEDIA_BUTTON" />
+            </intent-filter>
         </service>
+
+        <!--
+            Receives media button events (e.g. from Macrodroid "Simulate Media Button")
+            when MusicPlaybackService is not running (cold start).
+            Priority 1000 ensures we win over other music apps.
+        -->
+        <receiver
+            android:name=".receiver.MediaButtonEventReceiver"
+            android:exported="true">
+            <intent-filter android:priority="1000">
+                <action android:name="android.intent.action.MEDIA_BUTTON" />
+            </intent-filter>
+        </receiver>
 
         <provider
             android:name="androidx.core.content.FileProvider"
