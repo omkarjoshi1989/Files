@@ -227,8 +227,11 @@ fun ApplicationsScreen(
                     }
                 } else {
                     items(openableApps, key = { "app_${it.packageName}" }) { app ->
-                        // Build menu: all apps can be hidden, only user apps can be uninstalled
+                        // Build menu: all apps can have settings opened and be hidden, only user apps can be uninstalled
                         val menuItems = buildList {
+                            add(LongPressMenuItem("App Info") {
+                                launchAppSettings(context, app.packageName)
+                            })
                             add(LongPressMenuItem("Hide App") {
                                 HiddenAppsManager.hideApp(context, app.packageName)
                                 hiddenPackages = HiddenAppsManager.getHiddenApps(context)
@@ -271,6 +274,9 @@ fun ApplicationsScreen(
                             dimmed = true,
                             onTap = { launchApp(context, app.packageName) },
                             longPressMenuItems = listOf(
+                                LongPressMenuItem("App Info") {
+                                    launchAppSettings(context, app.packageName)
+                                },
                                 LongPressMenuItem("Unhide App") {
                                     HiddenAppsManager.unhideApp(context, app.packageName)
                                     hiddenPackages = HiddenAppsManager.getHiddenApps(context)
@@ -521,6 +527,20 @@ private fun launchApp(context: Context, packageName: String) {
     val intent = context.packageManager.getLaunchIntentForPackage(packageName) ?: return
     intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
     runCatching { context.startActivity(intent) }
+}
+
+/** Opens the system app settings page for any app. */
+private fun launchAppSettings(context: Context, packageName: String) {
+    val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+        data = Uri.fromParts("package", packageName, null)
+        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    }
+    try {
+        context.startActivity(intent)
+    } catch (e: Exception) {
+        Log.e("ApplicationsScreen", "Failed to open app settings: ${e.message}", e)
+        Toast.makeText(context, "Cannot open app settings", Toast.LENGTH_SHORT).show()
+    }
 }
 
 /** Opens the system uninstall dialog for the given user-installed app. */

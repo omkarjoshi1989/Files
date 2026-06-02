@@ -58,31 +58,15 @@
 | 11 | Video: Long press to play video in 1.5x speed; release to restore speed                                                                            | ✅ Done  |                                                                                                                                                               |
 | 12 | Video: Double tap left/right half of screen to rewind/forward 10 seconds                                                                           | ✅ Done  |                                                                                                                                                               |
 | 13 | Video: Remember video files' playback position. everytime i am opening video it MUST resume from last played duration.                             | ✅ Done  |                                                                                                                                                               |
-| 14 | Video playback in landscape mode MUST restrict left/right swipe to change video file playback. Swipe functionality must only work in portrait mode | ✅ Done |                                                                                                                                                               |
+| 14 | Video playback in landscape mode MUST restrict left/right swipe to change video file playback. Swipe functionality must only work in portrait mode | ✅ Done  |                                                                                                                                                               |
 
 ## Applications
 
-| #  | Feature                                                 | Status  | Notes |
-|----|---------------------------------------------------------|---------|-------|
-| 1  | Applications screen: 7x7 grid, single-line names        | Pending |       |
-| 2  | List installed user apps and system apps (toggle)       | Pending |       |
-| 3  | Extract APK from installed apps (App Backup)            | Pending |       |
-| 4  | Uninstall apps directly from the list                   | Pending |       |
-| 5  | Open app on tap; system settings via long-press         | Pending |       |
-| 6  | Share APK file via Bluetooth/Apps                       | Pending |       |
-| 7  | Hidden apps section (user apps only)                    | Pending |       |
-| 8  | Search bar filter at top                                | Pending |       |
-11. For Applications menu, USE EXITING OR design entire new screen to display installed apps and also system apps available on device.
-    Use 7 columns and 7 rows grid size for this apps screen.
-    When user taps on any user-installed app , we must open that app. 
-    On long press of app icon give option to hide apps from main grid.
-    Also maintain hidden apps section to keep apps hidden from main grid from installed apps. Hidden app not applicable for system apps grid.
-    Use two lines to display app names.
-    Use search bar on top to filter apps. 
-    Total 3 sections in grid: 1st for user apps, 2nd for system apps, 3rd for hidden apps
-12. PENDING : show open-able apps only and dont categorize seperatly fro user apps vs system apps. Inclue all openable apps in one grid only
-
-14. 
+| # | Feature                                      | Status  | Notes |
+|---|----------------------------------------------|---------|-------|
+| 3 | Extract APK from installed apps (App Backup) | Pending |       |
+| 5 | Open app settings from long press            | Pending |       |
+| 6 | Share APK file via Bluetooth/Apps            | Pending |       |
 
 ## Security & Authentication
 
@@ -94,13 +78,13 @@
 
 ## Settings & System
 
-| # | Feature                                                                                                                                 | Status  | Notes                                                                                                                                 |
-|---|-----------------------------------------------------------------------------------------------------------------------------------------|---------|---------------------------------------------------------------------------------------------------------------------------------------|
-| 1 | Home screen with category cards                                                                                                         | ✅ Done  | Replace into settings page later                                                                                                      |
-| 2 | Dark/Light theme toggle                                                                                                                 | ✅ Done  | Three-way segmented button in Settings: System / Light / Dark; persisted to SharedPreferences; applies instantly across the whole app |
-| 3 | Settings screen                                                                                                                         | ✅ Done  | Accessible from Home; manages master password toggle                                                                                  |
-| 4 | Camera button directly from app                                                                                                         | Pending |                                                                                                                                       |
-| 5 | Cloud storage integration (Google Drive and Mega) . Local internal storage to Google Drive storage file cut copy paste MUST BE POSSIBLE | Pending |                                                                                                                                       |
+| # | Feature                                                                                                               | Status  | Notes                                                                                                                                 |
+|---|-----------------------------------------------------------------------------------------------------------------------|---------|---------------------------------------------------------------------------------------------------------------------------------------|
+| 1 | Home screen with category cards                                                                                       | ✅ Done  | Replace into settings page later                                                                                                      |
+| 2 | Dark/Light theme toggle                                                                                               | ✅ Done  | Three-way segmented button in Settings: System / Light / Dark; persisted to SharedPreferences; applies instantly across the whole app |
+| 3 | Settings screen                                                                                                       | ✅ Done  | Accessible from Home; manages master password toggle                                                                                  |
+| 4 | Camera button directly from app                                                                                       | Pending |                                                                                                                                       |
+| 5 | Cloud storage integration for Google Drive. Download option for folders and files from Google Drive to device storage | Pending |                                                                                                                                       |
 
 ## Photos / Gallery features
 
@@ -114,3 +98,4 @@
 | 7 | Group photos by Date (Today, Yesterday, Month)   | Pending |       |
 
 ## Issues observed
+1. 
