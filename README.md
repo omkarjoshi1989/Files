@@ -72,12 +72,17 @@
 | 6  | Share APK file via Bluetooth/Apps                       | Pending |       |
 | 7  | Hidden apps section (user apps only)                    | Pending |       |
 | 8  | Search bar filter at top                                | Pending |       |
-11. For Applications menu, design entire new screen to display installed apps and also system apps available on device.
+11. For Applications menu, USE EXITING OR design entire new screen to display installed apps and also system apps available on device.
     Use 7 columns and 7 rows grid size for this apps screen.
-    When user taps on any user-installed app , we must open that app.
-    Also maintain hidden apps section to keep apps hidden from main grip of installed apps. Hidden app not applicable for system apps grid.
-    Use single line to display app names.
-    Use search bar on top to filter apps.
+    When user taps on any user-installed app , we must open that app. 
+    On long press of app icon give option to hide apps from main grid.
+    Also maintain hidden apps section to keep apps hidden from main grid from installed apps. Hidden app not applicable for system apps grid.
+    Use two lines to display app names.
+    Use search bar on top to filter apps. 
+    Total 3 sections in grid: 1st for user apps, 2nd for system apps, 3rd for hidden apps
+12. PENDING : show open-able apps only and dont categorize seperatly fro user apps vs system apps. Inclue all openable apps in one grid only
+
+14. 
 
 ## Security & Authentication
 
@@ -109,4 +114,3 @@
 | 7 | Group photos by Date (Today, Yesterday, Month)   | Pending |       |
 
 ## Issues observed
-2. after long time idle on music player screen, if tried to reinterct with play button music wont resunme. Also long time if app stays under  screen turn off with music player screen opened after screen unlock, then also music wont resume playinग् 
