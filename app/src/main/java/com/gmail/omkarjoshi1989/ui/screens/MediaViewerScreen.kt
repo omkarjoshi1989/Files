@@ -250,7 +250,7 @@ fun MediaViewerScreen(
                 .setUri(android.net.Uri.fromFile(file))
                 .setMediaMetadata(
                     MediaMetadata.Builder()
-                        .setTitle(file.nameWithoutExtension)
+                                .setTitle(stripNumericPrefix(file.nameWithoutExtension))
                         .setArtist("Files App")
                         .build()
                 )
@@ -400,7 +400,6 @@ fun MediaViewerScreen(
     // finishes, preventing audio blips on intermediate pages.
     LaunchedEffect(Unit) {
         snapshotFlow { pagerState.settledPage }.collect { page ->
-            isImmersive = false
 
             val actualPage = virtualToActual(page)
 
@@ -588,6 +587,9 @@ fun MediaViewerScreen(
             when {
                 FileUtils.isImageFile(file) -> ImagePage(
                     file = file,
+                    brightness = screenBrightness,
+                    onBrightnessChange = { screenBrightness = it.coerceIn(0f, 1f) },
+                    showControls = !isImmersive,
                     onTap = { isImmersive = !isImmersive }
                 )
                 FileUtils.isVideoFile(file) -> VideoPage(
@@ -605,6 +607,8 @@ fun MediaViewerScreen(
                                     currentPosition = if (isCurrentPage) audioPosition else 0L,
                                     duration = if (isCurrentPage) audioDuration else 0L,
                                     repeatMode = repeatMode,
+                                    trackIndex = (pageToPlaylistIndex[actualPage] ?: 0) + 1,
+                                    totalTracks = audioPageIndices.size,
                                     onToggleRepeat = {
                                         val next = if (repeatMode == Player.REPEAT_MODE_ONE) Player.REPEAT_MODE_ALL else Player.REPEAT_MODE_ONE
                                         repeatMode = next
@@ -629,35 +633,35 @@ fun MediaViewerScreen(
         ) {
                 TopAppBar(
                 title = {
-                    Column {
-                        Text(
-                            text = if (isCurrentFileAudio) {
-                                currentFile?.parentFile?.name ?: currentFile?.name ?: ""
-                            } else {
-                                currentFile?.name ?: ""
-                            },
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold
-                        )
-                        Text(
-                            text = "${virtualToActual(pagerState.settledPage) + 1} / ${actualCount}",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = Color.White.copy(alpha = 0.7f)
-                        )
+                    if (!isCurrentFileAudio) {
+                        Column {
+                            Text(
+                                text = currentFile?.name ?: "",
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text(
+                                text = "${virtualToActual(pagerState.settledPage) + 1} / $actualCount",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = Color.White.copy(alpha = 0.7f)
+                            )
+                        }
                     }
                 },
                 navigationIcon = {
-                    IconButton(onClick = onClose) {
-                        Icon(
-                            Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "Close"
-                        )
+                    if (!isCurrentFileAudio) {
+                        IconButton(onClick = onClose) {
+                            Icon(
+                                Icons.AutoMirrored.Filled.ArrowBack,
+                                contentDescription = "Close"
+                            )
+                        }
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = Color.Black.copy(alpha = 0.85f),
+                    containerColor = if (isCurrentFileAudio) Color.Transparent else Color.Black.copy(alpha = 0.85f),
                     titleContentColor = Color.White,
                     navigationIconContentColor = Color.White
                 ),
@@ -668,7 +672,13 @@ fun MediaViewerScreen(
 }
 
 @Composable
-private fun ImagePage(file: File, onTap: () -> Unit) {
+private fun ImagePage(
+    file: File,
+    brightness: Float,
+    onBrightnessChange: (Float) -> Unit,
+    showControls: Boolean,
+    onTap: () -> Unit
+) {
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -688,6 +698,36 @@ private fun ImagePage(file: File, onTap: () -> Unit) {
             modifier = Modifier.fillMaxSize(),
             contentScale = ContentScale.Fit
         )
+
+        // Brightness slider overlay — shown when controls are visible (not immersive)
+        AnimatedVisibility(
+            visible = showControls,
+            enter = fadeIn(),
+            exit = fadeOut(),
+            modifier = Modifier.fillMaxSize()
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .systemBarsPadding()
+            ) {
+                VerticalSliderColumn(
+                    icon = {
+                        Icon(
+                            imageVector = Icons.Filled.BrightnessHigh,
+                            contentDescription = "Brightness",
+                            tint = Color.White,
+                            modifier = Modifier.size(24.dp)
+                        )
+                    },
+                    value = brightness,
+                    onValueChange = { onBrightnessChange(it) },
+                    modifier = Modifier
+                        .align(Alignment.CenterStart)
+                        .padding(start = 12.dp)
+                )
+            }
+        }
     }
 }
 
@@ -1089,6 +1129,8 @@ private fun AudioPage(
     currentPosition: Long,
     duration: Long,
     repeatMode: Int,
+    trackIndex: Int,
+    totalTracks: Int,
     onToggleRepeat: () -> Unit,
     onPlayPause: () -> Unit,
     onTap: () -> Unit
@@ -1150,6 +1192,18 @@ private fun AudioPage(
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.Center
                 ) {
+                    // Folder name + track serial
+                    Text(
+                        text = "${file.parentFile?.name ?: ""}  ·  $trackIndex / $totalTracks",
+                        color = Color(0xFFFF9800),
+                        style = MaterialTheme.typography.bodySmall,
+                        textAlign = TextAlign.Center,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+
+                    Spacer(modifier = Modifier.height(4.dp))
+
                     // File name
                     Text(
                         text = stripNumericPrefix(file.nameWithoutExtension),
@@ -1159,15 +1213,6 @@ private fun AudioPage(
                         textAlign = TextAlign.Center,
                         maxLines = 2,
                         overflow = TextOverflow.Ellipsis
-                    )
-
-                    Spacer(modifier = Modifier.height(4.dp))
-
-                    // File size
-                    Text(
-                        text = FileUtils.formatFileSize(file.length()),
-                        color = Color.White.copy(alpha = 0.6f),
-                        style = MaterialTheme.typography.bodySmall
                     )
 
                     Spacer(modifier = Modifier.height(16.dp))
@@ -1237,6 +1282,18 @@ private fun AudioPage(
 
                 Spacer(modifier = Modifier.height(24.dp))
 
+                // Folder name + track serial
+                Text(
+                    text = "${file.parentFile?.name ?: ""}  ·  $trackIndex / $totalTracks",
+                    color = Color(0xFFFF9800),
+                    style = MaterialTheme.typography.bodySmall,
+                    textAlign = TextAlign.Center,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+
+                Spacer(modifier = Modifier.height(4.dp))
+
                 // File name
                 Text(
                     text = stripNumericPrefix(file.nameWithoutExtension),
@@ -1248,14 +1305,6 @@ private fun AudioPage(
                     overflow = TextOverflow.Ellipsis
                 )
 
-                Spacer(modifier = Modifier.height(8.dp))
-
-                // File size
-                Text(
-                    text = FileUtils.formatFileSize(file.length()),
-                    color = Color.White.copy(alpha = 0.6f),
-                    style = MaterialTheme.typography.bodySmall
-                )
 
                 Spacer(modifier = Modifier.height(32.dp))
 
@@ -1361,7 +1410,7 @@ private fun AudioAlbumArt(albumArt: Bitmap?, landscapeMode: Boolean) {
     }
 }
 
-/** Previous · Play/Pause · Next controls row (centered), with Repeat button below. */
+/** Previous · Play/Pause · Next controls row with Repeat button below, all centered. */
 @Composable
 private fun AudioControlsRow(
     isPlaying: Boolean,
@@ -1376,7 +1425,7 @@ private fun AudioControlsRow(
         modifier = Modifier.fillMaxWidth(),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        // ── Prev · Play/Pause · Next ──
+        // ── Prev · Play/Pause · Next ────────────────────────────────────
         Row(
             horizontalArrangement = Arrangement.spacedBy(16.dp, Alignment.CenterHorizontally),
             verticalAlignment = Alignment.CenterVertically,
@@ -1441,11 +1490,11 @@ private fun AudioControlsRow(
 
         Spacer(modifier = Modifier.height(16.dp))
 
-        // ── Repeat toggle (centered below) ──
+        // ── Repeat toggle (centered below play/pause) ────────────────────
         IconButton(
             onClick = { onToggleRepeat() },
             modifier = Modifier
-                .size(56.dp)
+                .size(52.dp)
                 .clip(CircleShape)
                 .background(
                     if (repeatActive) Color(0xFFFF9800).copy(alpha = 0.25f)

@@ -158,7 +158,7 @@ class MusicPlaybackService : MediaSessionService() {
                 .setUri(android.net.Uri.fromFile(file))
                 .setMediaMetadata(
                     MediaMetadata.Builder()
-                        .setTitle(file.nameWithoutExtension)
+                        .setTitle(FileUtils.stripNumericPrefix(file.nameWithoutExtension))
                         .setArtist("Files App")
                         .build()
                 )

@@ -46,17 +46,6 @@ object FileUtils {
             ?: emptyList()
     }
 
-    /**
-     * Returns image + video files combined (visual media) from the folder.
-     */
-    fun getVisualMediaFilesInFolder(context: Context, folder: File): List<File> {
-        val showHidden = SettingsManager.isShowHiddenFiles(context)
-        return folder.listFiles()
-            ?.filter { it.isFile && isVisualMediaFile(it) && (showHidden || !it.isHidden) }
-            ?.sortedBy { it.name.lowercase() }
-            ?: emptyList()
-    }
-
     fun getAudioFilesInFolder(context: Context, folder: File): List<File> {
         val showHidden = SettingsManager.isShowHiddenFiles(context)
         return folder.listFiles()
@@ -65,15 +54,33 @@ object FileUtils {
             ?: emptyList()
     }
 
+    fun getImageFilesInFolder(context: Context, folder: File): List<File> {
+        val showHidden = SettingsManager.isShowHiddenFiles(context)
+        return folder.listFiles()
+            ?.filter { it.isFile && isImageFile(it) && (showHidden || !it.isHidden) }
+            ?.sortedBy { it.name.lowercase() }
+            ?: emptyList()
+    }
+
+    fun getVideoFilesInFolder(context: Context, folder: File): List<File> {
+        val showHidden = SettingsManager.isShowHiddenFiles(context)
+        return folder.listFiles()
+            ?.filter { it.isFile && isVideoFile(it) && (showHidden || !it.isHidden) }
+            ?.sortedBy { it.name.lowercase() }
+            ?: emptyList()
+    }
+
     /**
      * Returns files from [folder] that belong to the same media group as [referenceFile].
-     * Images and videos are grouped together as "visual media".
+     * Images and videos are each kept in their own group so that opening an image
+     * only allows swiping through other images (not videos) and vice-versa.
      * Audio files are grouped separately.
      * Falls back to all media files if the reference file type is unknown.
      */
     fun getFilesOfSameType(context: Context, folder: File, referenceFile: File): List<File> {
         return when {
-            isVisualMediaFile(referenceFile) -> getVisualMediaFilesInFolder(context, folder)
+            isImageFile(referenceFile) -> getImageFilesInFolder(context, folder)
+            isVideoFile(referenceFile) -> getVideoFilesInFolder(context, folder)
             isAudioFile(referenceFile) -> getAudioFilesInFolder(context, folder)
             else -> getMediaFilesInFolder(context, folder)
         }
@@ -144,4 +151,11 @@ object FileUtils {
         }
         return Intent.createChooser(intent, "Share file")
     }
+
+    /**
+     * Strips leading numeric prefixes (e.g. "01 ", "01. ", "1 - ", "02 03 ")
+     * from audio file names so they display cleanly in the notification and UI.
+     */
+    fun stripNumericPrefix(name: String): String =
+        name.replace(Regex("^(\\d+[\\s._\\-]*)+"), "").trim()
 }
