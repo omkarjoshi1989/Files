@@ -26,12 +26,15 @@ class MediaViewerActivity : ComponentActivity() {
         const val EXTRA_FILE_PATH = "file_path"
         /** When true, only the single tapped file is shown — no swiping to siblings. */
         const val EXTRA_SINGLE_FILE_MODE = "single_file_mode"
+        /** When true, the music player opens without auto-playing — waits for user to tap play. */
+        const val EXTRA_NO_AUTOPLAY = "no_autoplay"
         private const val NOTIFICATION_PERMISSION_REQUEST_CODE = 100
     }
 
     private var mediaFiles by mutableStateOf<List<File>>(emptyList())
     private var initialIndex by mutableIntStateOf(0)
     private var loopEnabled by mutableStateOf(false)
+    private var autoPlay by mutableStateOf(true)
     // Incremented on every new intent so the Composable tree reinitialises
     // (rememberPagerState picks up the new initialIndex).
     private var screenKey by mutableIntStateOf(0)
@@ -60,6 +63,7 @@ class MediaViewerActivity : ComponentActivity() {
                         mediaFiles = mediaFiles,
                         initialIndex = initialIndex,
                         loopEnabled = loopEnabled,
+                        autoPlay = autoPlay,
                         onClose = { finish() }
                     )
                 }
@@ -88,6 +92,8 @@ class MediaViewerActivity : ComponentActivity() {
         initialIndex = files.indexOfFirst { it.absolutePath == filePath }.coerceAtLeast(0)
         // Enable loop swiping for all media types (visual media and audio)
         loopEnabled = true
+        // Respect no-autoplay flag (e.g. when launched from file explorer toolbar)
+        autoPlay = !intent.getBooleanExtra(EXTRA_NO_AUTOPLAY, false)
         return true
     }
 

@@ -1,6 +1,9 @@
 package com.gmail.omkarjoshi1989.ui.screens
 
+import android.os.Environment
+import android.os.StatFs
 import android.text.format.DateFormat
+import android.content.Intent
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
@@ -25,14 +28,25 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Android
 import androidx.compose.material.icons.filled.Apps
 import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.material.icons.filled.ArrowUpward
+import androidx.compose.material.icons.filled.Bookmark
+import androidx.compose.material.icons.filled.BookmarkBorder
+import androidx.compose.material.icons.filled.Collections
+import androidx.compose.material.icons.filled.DeleteSweep
+import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material.icons.filled.MusicNote
+import androidx.compose.material.icons.filled.PictureAsPdf
+import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Sort
-import androidx.compose.material.icons.filled.AccessTime
+import androidx.compose.material.icons.filled.Storage
+import androidx.compose.material.icons.filled.VideoLibrary
 import androidx.compose.material.icons.filled.Archive
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
@@ -40,7 +54,6 @@ import androidx.compose.material.icons.filled.ContentCut
 import androidx.compose.material.icons.filled.ContentPaste
 import androidx.compose.material.icons.filled.CreateNewFolder
 import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.DeleteSweep
 import androidx.compose.material.icons.filled.DriveFileRenameOutline
 import androidx.compose.material.icons.filled.FolderZip
 import androidx.compose.material.icons.filled.NoteAdd
@@ -51,6 +64,7 @@ import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.BottomAppBar
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -59,8 +73,13 @@ import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.ModalDrawerSheet
+import androidx.compose.material3.ModalNavigationDrawer
+import androidx.compose.material3.NavigationDrawerItem
+import androidx.compose.material3.NavigationDrawerItemDefaults
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
@@ -70,6 +89,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
+import androidx.compose.material3.rememberDrawerState
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -78,6 +98,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -92,12 +113,18 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import com.gmail.omkarjoshi1989.MediaViewerActivity
+import com.gmail.omkarjoshi1989.model.CollectionType
+import com.gmail.omkarjoshi1989.model.folderContainsMatchingFiles
+import com.gmail.omkarjoshi1989.model.matchesFile
 import com.gmail.omkarjoshi1989.ui.components.FileThumbnail
 import com.gmail.omkarjoshi1989.util.FavoritesManager
 import com.gmail.omkarjoshi1989.util.FileUtils
+import com.gmail.omkarjoshi1989.util.MusicResumeManager
 import com.gmail.omkarjoshi1989.viewmodel.ClipboardOperation
 import com.gmail.omkarjoshi1989.viewmodel.FileSortOption
 import com.gmail.omkarjoshi1989.viewmodel.FileExplorerViewModel
+import kotlinx.coroutines.launch
 import java.io.File
 import java.util.Date
 
@@ -107,17 +134,21 @@ fun FileExplorerScreen(
     viewModel: FileExplorerViewModel,
     onOpenFile: (File) -> Unit,
     onNavigateBack: () -> Unit,
-    onNavigateToRecentFiles: () -> Unit,
     onNavigateToFavorites: () -> Unit,
     onNavigateToApplications: () -> Unit,
     onNavigateToSettings: () -> Unit,
     onNavigateToRecycleBin: () -> Unit,
-    onNavigateToAudioFolders: () -> Unit,
-    onShowToast: (String) -> Unit
+    onShowToast: (String) -> Unit,
+    collectionFilter: CollectionType? = null,
+    collectionTitle: String? = null,
+    onNavigateToCollection: ((CollectionType) -> Unit)? = null,
+    onNavigateToInternalStorage: (() -> Unit)? = null
 ) {
     val context = LocalContext.current
     val uiState by viewModel.uiState.collectAsState()
     val snackbarHostState = remember { SnackbarHostState() }
+    val drawerState = rememberDrawerState(DrawerValue.Closed)
+    val coroutineScope = rememberCoroutineScope()
 
     var favoritePaths by remember { mutableStateOf(FavoritesManager.getFavorites(context)) }
 
@@ -141,6 +172,21 @@ fun FileExplorerScreen(
 
     // Converts selectedPaths to File list (used for batch clipboard ops)
     fun selectedFiles(): List<File> = selectedPaths.map { File(it) }
+
+    // Apply collection filter: show only matching files; for directories, only show them
+    // if they (or any descendant) contain at least one matching file.
+    // This folder-hiding behaviour is NOT applied for Applications and Recycle Bin.
+    val displayFiles = if (collectionFilter != null) {
+        uiState.files.filter { file ->
+            if (file.isDirectory) collectionFilter.folderContainsMatchingFiles(file)
+            else collectionFilter.matchesFile(file)
+        }
+    } else {
+        uiState.files
+    }
+
+    // Whether the hamburger (drawer) icon should be shown instead of back arrow
+    val isAtRootLevel = File(uiState.currentPath).parentFile?.canRead() != true
 
     // ── Back handler: when in selection mode, clear selection + clipboard ────
     // Placed here so it takes priority over the Activity-level BackHandler.
@@ -172,6 +218,45 @@ fun FileExplorerScreen(
         lifecycleOwner.lifecycle.addObserver(obs)
         onDispose { lifecycleOwner.lifecycle.removeObserver(obs) }
     }
+
+    ModalNavigationDrawer(
+        drawerState = drawerState,
+        gesturesEnabled = !isSelectionMode && !uiState.isSearchActive,
+        drawerContent = {
+            AppNavigationDrawer(
+                currentCollectionFilter = collectionFilter,
+                onCloseDrawer = { coroutineScope.launch { drawerState.close() } },
+                onNavigateToInternalStorage = {
+                    coroutineScope.launch { drawerState.close() }
+                    if (collectionFilter != null) {
+                        onNavigateToInternalStorage?.invoke()
+                    } else {
+                        viewModel.navigateTo(Environment.getExternalStorageDirectory().absolutePath)
+                    }
+                },
+                onNavigateToCollection = { type ->
+                    coroutineScope.launch { drawerState.close() }
+                    onNavigateToCollection?.invoke(type)
+                },
+                onNavigateToApplications = {
+                    coroutineScope.launch { drawerState.close() }
+                    onNavigateToApplications()
+                },
+                onNavigateToRecycleBin = {
+                    coroutineScope.launch { drawerState.close() }
+                    onNavigateToRecycleBin()
+                },
+                onNavigateToFavorites = {
+                    coroutineScope.launch { drawerState.close() }
+                    onNavigateToFavorites()
+                },
+                onNavigateToSettings = {
+                    coroutineScope.launch { drawerState.close() }
+                    onNavigateToSettings()
+                }
+            )
+        }
+    ) {
 
     Scaffold(
         snackbarHost = { SnackbarHost(snackbarHostState) },
@@ -331,24 +416,29 @@ fun FileExplorerScreen(
                                 }
                             )
                         } else {
-                            Text("Files", fontWeight = FontWeight.Bold)
+                            Text(collectionTitle ?: "Files", fontWeight = FontWeight.Bold)
                         }
                     },
                     navigationIcon = {
+                        val showHamburger = !isSelectionMode && !uiState.isSearchActive && isAtRootLevel && collectionFilter == null
                         IconButton(onClick = {
-                            if (isSelectionMode) {
-                                // Exiting selection mode without cut/copy → discard clipboard too
-                                selectedPaths = emptySet(); selectedFile = null
-                                viewModel.clearClipboard()
-                            } else when {
+                            when {
+                                isSelectionMode -> {
+                                    selectedPaths = emptySet(); selectedFile = null
+                                    viewModel.clearClipboard()
+                                }
                                 uiState.isSearchActive -> viewModel.toggleSearch()
-                                !viewModel.navigateUp() -> onNavigateBack()
+                                showHamburger -> coroutineScope.launch { drawerState.open() }
+                                else -> if (!viewModel.navigateUp()) onNavigateBack()
                             }
                         }) {
                             Icon(
-                                if (isSelectionMode || uiState.isSearchActive) Icons.Filled.Close
-                                else Icons.AutoMirrored.Filled.ArrowBack,
-                                contentDescription = "Back"
+                                when {
+                                    isSelectionMode || uiState.isSearchActive -> Icons.Filled.Close
+                                    showHamburger -> Icons.Filled.Menu
+                                    else -> Icons.AutoMirrored.Filled.ArrowBack
+                                },
+                                contentDescription = if (showHamburger) "Open menu" else "Back"
                             )
                         }
                     },
@@ -356,8 +446,8 @@ fun FileExplorerScreen(
                         if (isSelectionMode) {
                             // Select all toggle
                             IconButton(onClick = {
-                                selectedPaths = if (selectedPaths.size < uiState.files.size)
-                                    uiState.files.map { it.absolutePath }.toSet()
+                                selectedPaths = if (selectedPaths.size < displayFiles.size)
+                                    displayFiles.map { it.absolutePath }.toSet()
                                 else emptySet()
                             }) {
                                 Icon(Icons.Filled.Apps, contentDescription = "Select all")
@@ -393,8 +483,21 @@ fun FileExplorerScreen(
                             }
                         } else {
                             // Normal mode actions
-                            // Music button — navigates to the Audio Folders screen
-                            IconButton(onClick = { onNavigateToAudioFolders() }) {
+                            // Music button — opens recently played track in the music player
+                            IconButton(onClick = {
+                                val lastFile = MusicResumeManager.getLastFilePath(context)
+                                val lastFolder = MusicResumeManager.getLastFolderPath(context)
+                                if (lastFile != null && lastFolder != null && java.io.File(lastFile).exists()) {
+                                    val intent = Intent(context, MediaViewerActivity::class.java).apply {
+                                        putExtra(MediaViewerActivity.EXTRA_FILE_PATH, lastFile)
+                                        putExtra(MediaViewerActivity.EXTRA_FOLDER_PATH, lastFolder)
+                                        putExtra(MediaViewerActivity.EXTRA_NO_AUTOPLAY, true)
+                                    }
+                                    context.startActivity(intent)
+                                } else {
+                                    onShowToast("No recently played music")
+                                }
+                            }) {
                                 Icon(
                                     Icons.Filled.PlayCircle,
                                     contentDescription = "Music",
@@ -423,17 +526,6 @@ fun FileExplorerScreen(
                                 Icon(Icons.Filled.MoreVert, contentDescription = "More options")
                             }
                             DropdownMenu(expanded = showMoreMenu, onDismissRequest = { showMoreMenu = false }) {
-                                DropdownMenuItem(
-                                    text = { Text("All Files") },
-                                    onClick = { onNavigateToRecentFiles(); showMoreMenu = false },
-                                    leadingIcon = { Icon(Icons.Filled.AccessTime, contentDescription = null) }
-                                )
-                                DropdownMenuItem(
-                                    text = { Text("Favorites") },
-                                    onClick = { onNavigateToFavorites(); showMoreMenu = false },
-                                    leadingIcon = { Icon(Icons.Filled.Star, contentDescription = null) }
-                                )
-                                HorizontalDivider()
                                 FileSortOption.entries.forEach { option ->
                                     DropdownMenuItem(
                                         text = { Text("Sort by ${option.label}") },
@@ -448,24 +540,6 @@ fun FileExplorerScreen(
                                         }
                                     )
                                 }
-                                HorizontalDivider()
-                                DropdownMenuItem(
-                                    text = { Text("Applications") },
-                                    onClick = { onNavigateToApplications(); showMoreMenu = false },
-                                    leadingIcon = { Icon(Icons.Filled.Apps, contentDescription = null) }
-                                )
-                                HorizontalDivider()
-                                DropdownMenuItem(
-                                    text = { Text("Recycle Bin") },
-                                    onClick = { onNavigateToRecycleBin(); showMoreMenu = false },
-                                    leadingIcon = { Icon(Icons.Filled.DeleteSweep, contentDescription = null) }
-                                )
-                                HorizontalDivider()
-                                DropdownMenuItem(
-                                    text = { Text("Settings") },
-                                    onClick = { onNavigateToSettings(); showMoreMenu = false },
-                                    leadingIcon = { Icon(Icons.Filled.Settings, contentDescription = null) }
-                                )
                             }
                         }
                     },
@@ -488,9 +562,10 @@ fun FileExplorerScreen(
         ) {
             if (uiState.isLoading) CircularProgressIndicator(modifier = Modifier.align(Alignment.Center))
 
-            if (uiState.files.isEmpty() && !uiState.isLoading) {
+            if (displayFiles.isEmpty() && !uiState.isLoading) {
                 Text(
-                    text = "This folder is empty",
+                    text = if (collectionFilter != null) "No ${collectionTitle ?: "files"} found here"
+                           else "This folder is empty",
                     modifier = Modifier.align(Alignment.Center),
                     style = MaterialTheme.typography.bodyLarge,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -498,7 +573,7 @@ fun FileExplorerScreen(
             }
 
             LazyColumn(modifier = Modifier.fillMaxSize()) {
-                items(uiState.files, key = { it.absolutePath }) { file ->
+                items(displayFiles, key = { it.absolutePath }) { file ->
                     val isSelected = file.absolutePath in selectedPaths
                     FileListItem(
                         file = file,
@@ -533,6 +608,8 @@ fun FileExplorerScreen(
             }
         }
     }
+
+    } // end ModalNavigationDrawer
 
     // ── Single-file bottom sheet (long-press in selection mode ⋮ → Options) ───
     if (showBottomSheet && selectedFile != null) {
@@ -721,6 +798,205 @@ fun FileExplorerScreen(
             },
             dismissButton = { TextButton(onClick = { showCreateFileDialog = false }) { Text("Cancel") } }
         )
+    }
+}
+
+@Composable
+private fun AppNavigationDrawer(
+    currentCollectionFilter: CollectionType?,
+    onCloseDrawer: () -> Unit,
+    onNavigateToInternalStorage: () -> Unit,
+    onNavigateToCollection: (CollectionType) -> Unit,
+    onNavigateToApplications: () -> Unit,
+    onNavigateToRecycleBin: () -> Unit,
+    onNavigateToFavorites: () -> Unit,
+    onNavigateToSettings: () -> Unit
+) {
+    val storageStats = remember {
+        try {
+            val statFs = StatFs(Environment.getExternalStorageDirectory().absolutePath)
+            val total = statFs.blockCountLong * statFs.blockSizeLong
+            val avail = statFs.availableBlocksLong * statFs.blockSizeLong
+            val used = total - avail
+            Triple(used, total, if (total > 0) used.toFloat() / total else 0f)
+        } catch (_: Exception) {
+            Triple(0L, 0L, 0f)
+        }
+    }
+    val (usedBytes, totalBytes, usedFraction) = storageStats
+    val usedPercent = (usedFraction * 100).toInt()
+
+    fun formatStorageSize(bytes: Long): String = when {
+        bytes < 1024 -> "$bytes B"
+        bytes < 1024L * 1024 -> "${bytes / 1024} KB"
+        bytes < 1024L * 1024 * 1024 -> "${"%.1f".format(bytes / (1024.0 * 1024.0))} MB"
+        else -> "${"%.2f".format(bytes / (1024.0 * 1024.0 * 1024.0))} GB"
+    }
+
+    ModalDrawerSheet {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 24.dp, vertical = 20.dp)
+        ) {
+            Text(
+                text = "Files",
+                style = MaterialTheme.typography.headlineSmall,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.primary
+            )
+        }
+        HorizontalDivider()
+
+        LazyColumn {
+            // ── STORAGE SECTION ──────────────────────────────────────────────
+            item {
+                Text(
+                    text = "STORAGE",
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(start = 28.dp, top = 16.dp, bottom = 4.dp)
+                )
+            }
+            item {
+                NavigationDrawerItem(
+                    icon = { Icon(Icons.Filled.Storage, contentDescription = null) },
+                    label = {
+                        Column(modifier = Modifier.fillMaxWidth()) {
+                            Text("Internal Storage", style = MaterialTheme.typography.bodyMedium)
+                            Spacer(modifier = Modifier.height(4.dp))
+                            LinearProgressIndicator(
+                                progress = { usedFraction },
+                                modifier = Modifier.fillMaxWidth(),
+                                color = if (usedFraction > 0.9f) MaterialTheme.colorScheme.error
+                                        else MaterialTheme.colorScheme.primary,
+                                trackColor = MaterialTheme.colorScheme.surfaceVariant
+                            )
+                            Spacer(modifier = Modifier.height(2.dp))
+                            Text(
+                                text = "${formatStorageSize(usedBytes)} used of ${formatStorageSize(totalBytes)} · $usedPercent%",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    },
+                    selected = currentCollectionFilter == null,
+                    onClick = onNavigateToInternalStorage,
+                    modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding)
+                )
+            }
+
+            // ── COLLECTIONS SECTION ──────────────────────────────────────────
+            item {
+                HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+                Text(
+                    text = "COLLECTIONS",
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(start = 28.dp, top = 4.dp, bottom = 4.dp)
+                )
+            }
+            item {
+                NavigationDrawerItem(
+                    icon = { Icon(Icons.Filled.MusicNote, contentDescription = null) },
+                    label = { Text("Music") },
+                    selected = currentCollectionFilter == CollectionType.MUSIC,
+                    onClick = { onNavigateToCollection(CollectionType.MUSIC) },
+                    modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding)
+                )
+            }
+            item {
+                NavigationDrawerItem(
+                    icon = { Icon(Icons.Filled.Image, contentDescription = null) },
+                    label = { Text("Images") },
+                    selected = currentCollectionFilter == CollectionType.IMAGES,
+                    onClick = { onNavigateToCollection(CollectionType.IMAGES) },
+                    modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding)
+                )
+            }
+            item {
+                NavigationDrawerItem(
+                    icon = { Icon(Icons.Filled.VideoLibrary, contentDescription = null) },
+                    label = { Text("Videos") },
+                    selected = currentCollectionFilter == CollectionType.VIDEOS,
+                    onClick = { onNavigateToCollection(CollectionType.VIDEOS) },
+                    modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding)
+                )
+            }
+            item {
+                NavigationDrawerItem(
+                    icon = { Icon(Icons.Filled.PhotoLibrary, contentDescription = null) },
+                    label = { Text("Images & Videos") },
+                    selected = currentCollectionFilter == CollectionType.IMAGES_VIDEOS,
+                    onClick = { onNavigateToCollection(CollectionType.IMAGES_VIDEOS) },
+                    modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding)
+                )
+            }
+            item {
+                NavigationDrawerItem(
+                    icon = { Icon(Icons.Filled.PictureAsPdf, contentDescription = null) },
+                    label = { Text("PDF") },
+                    selected = currentCollectionFilter == CollectionType.PDF,
+                    onClick = { onNavigateToCollection(CollectionType.PDF) },
+                    modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding)
+                )
+            }
+            item {
+                NavigationDrawerItem(
+                    icon = { Icon(Icons.Filled.Android, contentDescription = null) },
+                    label = { Text("Applications") },
+                    selected = false,
+                    onClick = onNavigateToApplications,
+                    modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding)
+                )
+            }
+            item {
+                NavigationDrawerItem(
+                    icon = { Icon(Icons.Filled.DeleteSweep, contentDescription = null) },
+                    label = { Text("Recycle Bin") },
+                    selected = false,
+                    onClick = onNavigateToRecycleBin,
+                    modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding)
+                )
+            }
+
+            // ── BOOKMARK SECTION ─────────────────────────────────────────────
+            item {
+                HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+                Text(
+                    text = "BOOKMARK",
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(start = 28.dp, top = 4.dp, bottom = 4.dp)
+                )
+            }
+            item {
+                NavigationDrawerItem(
+                    icon = { Icon(Icons.Filled.Bookmark, contentDescription = null) },
+                    label = { Text("Favorites") },
+                    selected = false,
+                    onClick = onNavigateToFavorites,
+                    modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding)
+                )
+            }
+
+            // ── SETTINGS SECTION ─────────────────────────────────────────────
+            item {
+                HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+            }
+            item {
+                NavigationDrawerItem(
+                    icon = { Icon(Icons.Filled.Settings, contentDescription = null) },
+                    label = { Text("Settings") },
+                    selected = false,
+                    onClick = onNavigateToSettings,
+                    modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding)
+                )
+            }
+        }
     }
 }
 

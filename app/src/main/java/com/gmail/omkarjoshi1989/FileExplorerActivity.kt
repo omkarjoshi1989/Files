@@ -28,6 +28,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
@@ -36,13 +37,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.gmail.omkarjoshi1989.model.CollectionType
 import com.gmail.omkarjoshi1989.ui.screens.ApplicationsScreen
-import com.gmail.omkarjoshi1989.ui.screens.AudioFoldersScreen
 import com.gmail.omkarjoshi1989.ui.screens.FavoritesScreen
 import com.gmail.omkarjoshi1989.ui.screens.FileExplorerScreen
 import com.gmail.omkarjoshi1989.ui.screens.PinLockScreen
 import com.gmail.omkarjoshi1989.ui.screens.RecycleBinScreen
-import com.gmail.omkarjoshi1989.ui.screens.RecentFilesScreen
 import com.gmail.omkarjoshi1989.ui.screens.SettingsScreen
 import com.gmail.omkarjoshi1989.ui.screens.ZipViewerScreen
 import com.gmail.omkarjoshi1989.ui.theme.FilesTheme
@@ -50,19 +50,19 @@ import com.gmail.omkarjoshi1989.util.FileUtils
 import com.gmail.omkarjoshi1989.util.SettingsManager
 import com.gmail.omkarjoshi1989.util.ThemeMode
 import com.gmail.omkarjoshi1989.viewmodel.FileExplorerViewModel
-import com.gmail.omkarjoshi1989.viewmodel.RecentFilesViewModel
 import com.gmail.omkarjoshi1989.viewmodel.ZipViewModel
 
 enum class Screen {
-    FILE_EXPLORER, RECENT_FILES, FAVORITES, APPLICATIONS, SETTINGS, ZIP_VIEWER, RECYCLE_BIN, AUDIO_FOLDERS
+    FILE_EXPLORER, FAVORITES, APPLICATIONS, SETTINGS, ZIP_VIEWER, RECYCLE_BIN, COLLECTION
 }
 
-class TilesActivity : ComponentActivity() {
+class FileExplorerActivity : ComponentActivity() {
 
     private var hasStoragePermission by mutableStateOf(false)
     private var isAuthenticated by mutableStateOf(false)
     private var masterPasswordEnabled by mutableStateOf(true)
     private var currentScreen by mutableStateOf(Screen.FILE_EXPLORER)
+    private var currentCollection by mutableStateOf<CollectionType?>(null)
     private var themeMode by mutableStateOf(ThemeMode.SYSTEM)
     private var zipFileToView by mutableStateOf<java.io.File?>(null)
 
@@ -128,22 +128,52 @@ class TilesActivity : ComponentActivity() {
                                         handleExitBackPress()
                                     }
                                 },
-                                onNavigateToRecentFiles = { currentScreen = Screen.RECENT_FILES },
                                 onNavigateToFavorites = { currentScreen = Screen.FAVORITES },
                                 onNavigateToApplications = { currentScreen = Screen.APPLICATIONS },
                                 onNavigateToSettings = { currentScreen = Screen.SETTINGS },
                                 onNavigateToRecycleBin = { currentScreen = Screen.RECYCLE_BIN },
-                                onNavigateToAudioFolders = { currentScreen = Screen.AUDIO_FOLDERS },
+                                onNavigateToCollection = { type ->
+                                    currentCollection = type
+                                    currentScreen = Screen.COLLECTION
+                                },
+                                onNavigateToInternalStorage = null,
                                 onShowToast = { msg -> Toast.makeText(this, msg, Toast.LENGTH_SHORT).show() }
                             )
                         }
-                        Screen.RECENT_FILES -> {
-                            val recentViewModel: RecentFilesViewModel = viewModel()
-                            BackHandler { currentScreen = Screen.FILE_EXPLORER }
-                            RecentFilesScreen(
-                                viewModel = recentViewModel,
+                        Screen.COLLECTION -> {
+                            val cType = currentCollection ?: CollectionType.MUSIC
+                            val collectionViewModel: FileExplorerViewModel = viewModel(key = "collection_${cType.name}")
+                            val internalStorageRoot = Environment.getExternalStorageDirectory().absolutePath
+                            LaunchedEffect(cType) {
+                                collectionViewModel.navigateTo(internalStorageRoot)
+                            }
+                            BackHandler {
+                                val state = collectionViewModel.uiState.value
+                                when {
+                                    state.isSearchActive -> collectionViewModel.toggleSearch()
+                                    !collectionViewModel.navigateUp() -> currentScreen = Screen.FILE_EXPLORER
+                                }
+                            }
+                            FileExplorerScreen(
+                                viewModel = collectionViewModel,
+                                collectionFilter = cType,
+                                collectionTitle = cType.displayName,
                                 onOpenFile = { file -> openFile(file) },
-                                onNavigateBack = { currentScreen = Screen.FILE_EXPLORER }
+                                onNavigateBack = {
+                                    if (!collectionViewModel.navigateUp()) {
+                                        currentScreen = Screen.FILE_EXPLORER
+                                    }
+                                },
+                                onNavigateToFavorites = { currentScreen = Screen.FAVORITES },
+                                onNavigateToApplications = { currentScreen = Screen.APPLICATIONS },
+                                onNavigateToSettings = { currentScreen = Screen.SETTINGS },
+                                onNavigateToRecycleBin = { currentScreen = Screen.RECYCLE_BIN },
+                                onNavigateToCollection = { type ->
+                                    currentCollection = type
+                                    // Stay on COLLECTION screen, LaunchedEffect will reset path
+                                },
+                                onNavigateToInternalStorage = { currentScreen = Screen.FILE_EXPLORER },
+                                onShowToast = { msg -> Toast.makeText(this, msg, Toast.LENGTH_SHORT).show() }
                             )
                         }
                         Screen.FAVORITES -> {
@@ -163,7 +193,7 @@ class TilesActivity : ComponentActivity() {
                             BackHandler { currentScreen = Screen.FILE_EXPLORER }
                             SettingsScreen(
                                 onNavigateBack = {
-                                    masterPasswordEnabled = SettingsManager.isMasterPasswordEnabled(this@TilesActivity)
+                                    masterPasswordEnabled = SettingsManager.isMasterPasswordEnabled(this@FileExplorerActivity)
                                     currentScreen = Screen.FILE_EXPLORER
                                 }
                             )
@@ -188,12 +218,6 @@ class TilesActivity : ComponentActivity() {
                         Screen.RECYCLE_BIN -> {
                             BackHandler { currentScreen = Screen.FILE_EXPLORER }
                             RecycleBinScreen(
-                                onNavigateBack = { currentScreen = Screen.FILE_EXPLORER }
-                            )
-                        }
-                        Screen.AUDIO_FOLDERS -> {
-                            BackHandler { currentScreen = Screen.FILE_EXPLORER }
-                            AudioFoldersScreen(
                                 onNavigateBack = { currentScreen = Screen.FILE_EXPLORER }
                             )
                         }

@@ -124,6 +124,7 @@ fun MediaViewerScreen(
     mediaFiles: List<File>,
     initialIndex: Int,
     loopEnabled: Boolean = false,
+    autoPlay: Boolean = true,
     onClose: () -> Unit
 ) {
     val context = LocalContext.current
@@ -149,6 +150,7 @@ fun MediaViewerScreen(
     }
 
     val currentFile = mediaFiles.getOrNull(virtualToActual(pagerState.settledPage))
+    val isCurrentFileAudio = currentFile != null && FileUtils.isAudioFile(currentFile)
     var isImmersive by remember { mutableStateOf(false) }
 
     // ── Swipe lock: disable left/right swipe when in landscape + video page ──
@@ -235,6 +237,10 @@ fun MediaViewerScreen(
     // Incremented on ON_RESUME to trigger an instant pager snap when the pager
     // is stale (animations couldn't run while the screen was off).
     var resumeSyncNeeded by remember { mutableStateOf(false) }
+    // When autoPlay=false (launched from toolbar "resume" button), suppress the
+    // very first mc.play() so the player loads the track but stays paused until
+    // the user taps the play button themselves.
+    var initialLoadDone by remember { mutableStateOf(autoPlay) }
 
     // Build MediaItem list once (stable across recompositions)
     val audioMediaItems = remember(mediaFiles, audioPageIndices) {
@@ -335,7 +341,12 @@ fun MediaViewerScreen(
             // Do not override existing repeatMode here; the UI's hoisted `repeatMode`
             // was already applied to the controller when it connected. This preserves
             // the user's repeat choice across swipes.
-            mc.play()                      // ← auto-play
+            if (initialLoadDone) {
+                mc.play()                  // ← auto-play
+            } else {
+                // First open from toolbar — prepare the track but wait for user to tap play
+                initialLoadDone = true
+            }
             playlistLoaded = true
             playerTrackIndex = playlistIdx
         } else if (mc.currentMediaItemIndex != playlistIdx) {
@@ -616,11 +627,15 @@ fun MediaViewerScreen(
             enter = slideInVertically(initialOffsetY = { -it }) + fadeIn(),
             exit = slideOutVertically(targetOffsetY = { -it }) + fadeOut()
         ) {
-            TopAppBar(
+                TopAppBar(
                 title = {
                     Column {
                         Text(
-                            text = currentFile?.name ?: "",
+                            text = if (isCurrentFileAudio) {
+                                currentFile?.parentFile?.name ?: currentFile?.name ?: ""
+                            } else {
+                                currentFile?.name ?: ""
+                            },
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                             style = MaterialTheme.typography.titleMedium,
@@ -1137,7 +1152,7 @@ private fun AudioPage(
                 ) {
                     // File name
                     Text(
-                        text = file.name,
+                        text = stripNumericPrefix(file.nameWithoutExtension),
                         color = Color.White,
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.Bold,
@@ -1224,7 +1239,7 @@ private fun AudioPage(
 
                 // File name
                 Text(
-                    text = file.name,
+                    text = stripNumericPrefix(file.nameWithoutExtension),
                     color = Color.White,
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold,
@@ -1346,7 +1361,7 @@ private fun AudioAlbumArt(albumArt: Bitmap?, landscapeMode: Boolean) {
     }
 }
 
-/** Repeat · Previous · Play/Pause · Next controls row, shared by both orientations. */
+/** Previous · Play/Pause · Next controls row (centered), with Repeat button below. */
 @Composable
 private fun AudioControlsRow(
     isPlaying: Boolean,
@@ -1355,18 +1370,82 @@ private fun AudioControlsRow(
     onPlayPause: () -> Unit,
     controller: MediaController?
 ) {
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.SpaceEvenly,
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        val repeatActive = repeatMode == Player.REPEAT_MODE_ONE
+    val repeatActive = repeatMode == Player.REPEAT_MODE_ONE
 
-        // Repeat toggle
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        // ── Prev · Play/Pause · Next ──
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(16.dp, Alignment.CenterHorizontally),
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            // Previous track
+            IconButton(
+                onClick = {
+                    controller?.let { mc ->
+                        try { mc.seekToPrevious() } catch (_: Exception) {}
+                    }
+                },
+                modifier = Modifier
+                    .size(64.dp)
+                    .clip(CircleShape)
+                    .background(Color.White.copy(alpha = 0.12f))
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.SkipPrevious,
+                    contentDescription = "Previous",
+                    modifier = Modifier.size(36.dp),
+                    tint = Color.White
+                )
+            }
+
+            // Play / Pause (primary, larger)
+            IconButton(
+                onClick = { onPlayPause() },
+                modifier = Modifier
+                    .size(76.dp)
+                    .clip(CircleShape)
+                    .background(Color(0xFFFF9800))
+            ) {
+                Icon(
+                    imageVector = if (isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
+                    contentDescription = if (isPlaying) "Pause" else "Play",
+                    modifier = Modifier.size(42.dp),
+                    tint = Color.White
+                )
+            }
+
+            // Next track
+            IconButton(
+                onClick = {
+                    controller?.let { mc ->
+                        try { mc.seekToNext() } catch (_: Exception) {}
+                    }
+                },
+                modifier = Modifier
+                    .size(64.dp)
+                    .clip(CircleShape)
+                    .background(Color.White.copy(alpha = 0.12f))
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.SkipNext,
+                    contentDescription = "Next",
+                    modifier = Modifier.size(36.dp),
+                    tint = Color.White
+                )
+            }
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        // ── Repeat toggle (centered below) ──
         IconButton(
             onClick = { onToggleRepeat() },
             modifier = Modifier
-                .size(64.dp)
+                .size(56.dp)
                 .clip(CircleShape)
                 .background(
                     if (repeatActive) Color(0xFFFF9800).copy(alpha = 0.25f)
@@ -1376,67 +1455,18 @@ private fun AudioControlsRow(
             Icon(
                 imageVector = if (repeatActive) Icons.Filled.RepeatOne else Icons.Filled.Repeat,
                 contentDescription = "Repeat",
-                modifier = Modifier.size(32.dp),
+                modifier = Modifier.size(28.dp),
                 tint = if (repeatActive) Color(0xFFFF9800) else Color.White
             )
         }
-
-        // Previous track
-        IconButton(
-            onClick = {
-                controller?.let { mc ->
-                    try { mc.seekToPrevious() } catch (_: Exception) {}
-                }
-            },
-            modifier = Modifier
-                .size(64.dp)
-                .clip(CircleShape)
-                .background(Color.White.copy(alpha = 0.12f))
-        ) {
-            Icon(
-                imageVector = Icons.Filled.SkipPrevious,
-                contentDescription = "Previous",
-                modifier = Modifier.size(36.dp),
-                tint = Color.White
-            )
-        }
-
-        // Play / Pause (primary, larger)
-        IconButton(
-            onClick = { onPlayPause() },
-            modifier = Modifier
-                .size(76.dp)
-                .clip(CircleShape)
-                .background(Color(0xFFFF9800))
-        ) {
-            Icon(
-                imageVector = if (isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
-                contentDescription = if (isPlaying) "Pause" else "Play",
-                modifier = Modifier.size(42.dp),
-                tint = Color.White
-            )
-        }
-
-        // Next track
-        IconButton(
-            onClick = {
-                controller?.let { mc ->
-                    try { mc.seekToNext() } catch (_: Exception) {}
-                }
-            },
-            modifier = Modifier
-                .size(64.dp)
-                .clip(CircleShape)
-                .background(Color.White.copy(alpha = 0.12f))
-        ) {
-            Icon(
-                imageVector = Icons.Filled.SkipNext,
-                contentDescription = "Next",
-                modifier = Modifier.size(36.dp),
-                tint = Color.White
-            )
-        }
     }
+}
+
+/**
+ * Strips leading numeric prefixes (e.g. "01 02 ", "01. ", "1 - ") from audio file names.
+ */
+private fun stripNumericPrefix(name: String): String {
+    return name.replace(Regex("^(\\d+[\\s._\\-]*)+"), "").trim()
 }
 
 private fun formatTime(ms: Long): String {
