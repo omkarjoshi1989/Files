@@ -661,7 +661,7 @@ fun MediaViewerScreen(
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = if (isCurrentFileAudio) Color.Transparent else Color.Black.copy(alpha = 0.85f),
+                    containerColor = Color.Transparent,
                     titleContentColor = Color.White,
                     navigationIconContentColor = Color.White
                 ),
@@ -723,8 +723,8 @@ private fun ImagePage(
                     value = brightness,
                     onValueChange = { onBrightnessChange(it) },
                     modifier = Modifier
-                        .align(Alignment.CenterStart)
-                        .padding(start = 12.dp)
+                        .align(Alignment.CenterEnd)
+                        .padding(end = 12.dp)
                 )
             }
         }
@@ -861,6 +861,27 @@ private fun VideoPage(
             exoPlayer.stop()
             exoPlayer.clearMediaItems()
             exoPlayer.release()
+        }
+    }
+
+    // ── Screen wake lock: keep screen on while playing, allow timeout when paused ──
+    // Uses view.keepScreenOn which maps to FLAG_KEEP_SCREEN_ON on the window.
+    // When the flag is cleared the device's normal screen-off timer resumes.
+    val videoView = LocalView.current
+    DisposableEffect(exoPlayer) {
+        val listener = object : Player.Listener {
+            override fun onIsPlayingChanged(isPlaying: Boolean) {
+                videoView.keepScreenOn = isPlaying
+            }
+        }
+        exoPlayer.addListener(listener)
+        // Sync immediately with current player state (e.g. composable recomposed
+        // while already playing).
+        videoView.keepScreenOn = exoPlayer.isPlaying
+        onDispose {
+            exoPlayer.removeListener(listener)
+            // Always clear on disposal so the screen-off timer is restored.
+            videoView.keepScreenOn = false
         }
     }
 
@@ -1013,49 +1034,52 @@ private fun VideoPage(
                     .fillMaxSize()
                     .systemBarsPadding()
             ) {
-                VerticalSliderColumn(
-                    icon = {
-                        Icon(
-                            imageVector = Icons.Filled.BrightnessHigh,
-                            contentDescription = "Brightness",
-                            tint = Color.White,
-                            modifier = Modifier.size(24.dp)
-                        )
-                    },
-                    value = brightness,
-                    onValueChange = { onBrightnessChange(it) },
-                    modifier = Modifier
-                        .align(Alignment.CenterStart)
-                        .padding(start = 12.dp)
-                )
-                VerticalSliderColumn(
-                    icon = {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.VolumeUp,
-                            contentDescription = "Volume",
-                            tint = Color.White,
-                            modifier = Modifier.size(24.dp)
-                        )
-                    },
-                    value = rawVolume.toFloat() / maxVolume.toFloat(),
-                    onValueChange = { f ->
-                        val newVolume = (f * maxVolume).toInt().coerceIn(0, maxVolume)
-                        if (newVolume != rawVolume) {
-                            rawVolume = newVolume
-                            try {
-                                audioManager.setStreamVolume(
-                                    AudioManager.STREAM_MUSIC,
-                                    newVolume,
-                                    0
-                                )
-                            } catch (_: SecurityException) {
-                            }
-                        }
-                    },
+                // Brightness (left) + Volume (right) — both grouped on the right edge
+                Row(
                     modifier = Modifier
                         .align(Alignment.CenterEnd)
-                        .padding(end = 12.dp)
-                )
+                        .padding(end = 12.dp),
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    VerticalSliderColumn(
+                        icon = {
+                            Icon(
+                                imageVector = Icons.Filled.BrightnessHigh,
+                                contentDescription = "Brightness",
+                                tint = Color.White,
+                                modifier = Modifier.size(24.dp)
+                            )
+                        },
+                        value = brightness,
+                        onValueChange = { onBrightnessChange(it) }
+                    )
+                    VerticalSliderColumn(
+                        icon = {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.VolumeUp,
+                                contentDescription = "Volume",
+                                tint = Color.White,
+                                modifier = Modifier.size(24.dp)
+                            )
+                        },
+                        value = rawVolume.toFloat() / maxVolume.toFloat(),
+                        onValueChange = { f ->
+                            val newVolume = (f * maxVolume).toInt().coerceIn(0, maxVolume)
+                            if (newVolume != rawVolume) {
+                                rawVolume = newVolume
+                                try {
+                                    audioManager.setStreamVolume(
+                                        AudioManager.STREAM_MUSIC,
+                                        newVolume,
+                                        0
+                                    )
+                                } catch (_: SecurityException) {
+                                }
+                            }
+                        }
+                    )
+                }
             }
         }
 

@@ -1,5 +1,6 @@
 package com.gmail.omkarjoshi1989.ui.screens
 
+import android.media.MediaMetadataRetriever
 import android.os.Environment
 import android.os.StatFs
 import android.text.format.DateFormat
@@ -1112,6 +1113,80 @@ fun FileListItem(
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis
                 )
+
+                // ── Video playback progress bar (only for video files) ────────
+                if (!file.isDirectory && FileUtils.isVideoFile(file)) {
+                    val videoCtx = LocalContext.current
+
+                    // Increment on every ON_RESUME so produceState re-reads the
+                    // SharedPreferences position saved by VideoPage when the user
+                    // returns from the video player.
+                    var resumeTick by remember { mutableStateOf(0) }
+                    val videoLifecycleOwner = LocalLifecycleOwner.current
+                    DisposableEffect(videoLifecycleOwner) {
+                        val observer = LifecycleEventObserver { _, event ->
+                            if (event == Lifecycle.Event.ON_RESUME) resumeTick++
+                        }
+                        videoLifecycleOwner.lifecycle.addObserver(observer)
+                        onDispose { videoLifecycleOwner.lifecycle.removeObserver(observer) }
+                    }
+
+                    data class VideoProgress(val position: Long, val duration: Long)
+                    val videoProgress by produceState<VideoProgress?>(
+                        initialValue = null,
+                        key1 = file.absolutePath,
+                        key2 = file.lastModified(),
+                        key3 = resumeTick          // re-runs whenever screen resumes
+                    ) {
+                        value = withContext(Dispatchers.IO) {
+                            val prefs = videoCtx.getSharedPreferences(
+                                "media_positions", android.content.Context.MODE_PRIVATE
+                            )
+                            val pos = prefs.getLong(file.absolutePath, 0L)
+                            if (pos <= 0L) return@withContext null
+                            val retriever = MediaMetadataRetriever()
+                            val dur = try {
+                                retriever.setDataSource(file.absolutePath)
+                                retriever.extractMetadata(
+                                    MediaMetadataRetriever.METADATA_KEY_DURATION
+                                )?.toLongOrNull() ?: 0L
+                            } catch (_: Exception) {
+                                0L
+                            } finally {
+                                try { retriever.release() } catch (_: Exception) {}
+                            }
+                            if (dur <= 0L) null else VideoProgress(pos, dur)
+                        }
+                    }
+                    videoProgress?.let { vp ->
+                        val fraction = (vp.position.toFloat() / vp.duration.toFloat())
+                            .coerceIn(0f, 1f)
+                        val percent = (fraction * 100).toInt()
+                        if (percent in 1..99) {
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                LinearProgressIndicator(
+                                    progress = { fraction },
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .height(3.dp),
+                                    color = MaterialTheme.colorScheme.primary,
+                                    trackColor = MaterialTheme.colorScheme.surfaceVariant
+                                )
+                                Text(
+                                    text = "$percent%",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                            }
+                        }
+                    }
+                }
+
                 Spacer(modifier = Modifier.height(2.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     if (!file.isDirectory) {
