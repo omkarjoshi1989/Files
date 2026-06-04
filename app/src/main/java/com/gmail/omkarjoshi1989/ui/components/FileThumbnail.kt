@@ -10,10 +10,12 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.painter.ColorPainter
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -24,7 +26,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import coil.decode.VideoFrameDecoder
+import coil.request.CachePolicy
 import coil.request.ImageRequest
+import coil.request.Parameters
+import coil.size.Precision
 import java.io.File
 import kotlin.math.absoluteValue
 
@@ -47,12 +52,29 @@ fun FileThumbnail(
         }
 
         extension in imageExtensions -> {
+            val placeholder = remember { ColorPainter(Color(0xFFBDBDBD)) }
             AsyncImage(
                 model = ImageRequest.Builder(LocalContext.current)
                     .data(file)
-                    .crossfade(true)
-                    .size(120)
+                    // Keep crossfade off per-request; the singleton ImageLoader already
+                    // has crossfade enabled globally, avoiding a redundant animator.
+                    // 40 px is plenty for a list thumbnail; smaller = faster decode.
+                    .size(40)
+                    // INEXACT lets Coil reuse a cached bitmap that is close in size
+                    // instead of re-decoding just because the pixel dimensions differ
+                    // by a few pixels. Huge cache-hit improvement for mixed-DPI screens.
+                    .precision(Precision.INEXACT)
+                    // allowHardware(false) is already set on the singleton ImageLoader
+                    // but repeated here as a belt-and-suspenders guard: thumbnails must
+                    // NEVER go through the DMA-BUF / mtk_mm hardware pipeline.
+                    .allowHardware(false)
+                    .memoryCacheKey("img:${file.absolutePath}:${file.lastModified()}")
+                    .diskCacheKey("img:${file.absolutePath}:${file.lastModified()}")
+                    .diskCachePolicy(CachePolicy.ENABLED)
+                    .memoryCachePolicy(CachePolicy.ENABLED)
                     .build(),
+                placeholder = placeholder,
+                error = placeholder,
                 contentDescription = file.name,
                 modifier = modifier
                     .size(size)
@@ -62,13 +84,26 @@ fun FileThumbnail(
         }
 
         extension in videoExtensions -> {
+            val placeholder = remember { ColorPainter(Color(0xFF757575)) }
             AsyncImage(
                 model = ImageRequest.Builder(LocalContext.current)
                     .data(file)
-                    .crossfade(true)
                     .decoderFactory(VideoFrameDecoder.Factory())
-                    .size(120)
+                    .size(40)
+                    .precision(Precision.INEXACT)
+                    .allowHardware(false)
+                    .parameters(
+                        Parameters.Builder()
+                            .set(VideoFrameDecoder.VIDEO_FRAME_MICROS_KEY, 0L)
+                            .build()
+                    )
+                    .memoryCacheKey("vid:${file.absolutePath}:${file.lastModified()}")
+                    .diskCacheKey("vid:${file.absolutePath}:${file.lastModified()}")
+                    .diskCachePolicy(CachePolicy.ENABLED)
+                    .memoryCachePolicy(CachePolicy.ENABLED)
                     .build(),
+                placeholder = placeholder,
+                error = placeholder,
                 contentDescription = file.name,
                 modifier = modifier
                     .size(size)
@@ -133,4 +168,3 @@ private val imageExtensions = setOf(
 private val videoExtensions = setOf(
     "mp4", "mkv", "avi", "mov", "wmv", "flv", "webm", "3gp", "m4v", "ts"
 )
-

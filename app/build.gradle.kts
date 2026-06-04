@@ -53,6 +53,7 @@ dependencies {
     implementation(libs.androidx.lifecycle.viewmodel.compose)
     implementation(libs.coil.compose)
     implementation(libs.coil.video)
+    implementation(libs.google.play.services.auth)
     implementation(libs.media3.exoplayer)
     implementation(libs.media3.ui)
     implementation(libs.media3.session)

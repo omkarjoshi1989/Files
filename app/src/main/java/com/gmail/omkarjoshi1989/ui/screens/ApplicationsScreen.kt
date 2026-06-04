@@ -137,8 +137,7 @@ fun ApplicationsScreen(
 
     fun matches(app: InstalledAppInfo): Boolean =
         searchQuery.isBlank() ||
-                app.label.contains(searchQuery, ignoreCase = true) ||
-                app.packageName.contains(searchQuery, ignoreCase = true)
+                app.label.contains(searchQuery, ignoreCase = true)
 
     // All openable apps that are NOT hidden — user + system combined
     val openableApps = remember(allApps, hiddenPackages, searchQuery) {

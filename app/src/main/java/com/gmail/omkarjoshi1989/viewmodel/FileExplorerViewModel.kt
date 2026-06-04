@@ -8,12 +8,15 @@ import android.net.Uri
 import android.os.Build
 import android.os.Environment
 import android.os.FileObserver
+import android.util.LruCache
 import android.webkit.MimeTypeMap
 import androidx.core.content.FileProvider
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.gmail.omkarjoshi1989.util.RecycleBinManager
 import com.gmail.omkarjoshi1989.util.SettingsManager
+import com.gmail.omkarjoshi1989.model.clearFolderMatchCache
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -21,6 +24,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -73,7 +77,6 @@ data class FileExplorerUiState(
     val isRefreshing: Boolean = false,
     val errorMessage: String? = null,
     val operationMessage: String? = null,
-    val folderSizes: Map<String, Long> = emptyMap(),
     val isSelectionMode: Boolean = false,
     val selectedFilePaths: Set<String> = emptySet(),
     val searchQuery: String = "",
@@ -86,17 +89,42 @@ class FileExplorerViewModel(application: Application) : AndroidViewModel(applica
 
     private val _currentPath = MutableStateFlow(Environment.getExternalStorageDirectory().absolutePath)
     private val _showHiddenFiles = MutableStateFlow(SettingsManager.isShowHiddenFiles(application))
-    private val _clipboard = MutableStateFlow<ClipboardData?>(null)
+
+    /**
+     * Shared across ALL ViewModel instances (main explorer + every collection).
+     * Using [ClipboardRepository] means a file cut/copied in "Images" mode is
+     * still available for pasting after the user switches to "All Files" mode.
+     */
+    private val _clipboard get() = ClipboardRepository.clipboard
+
     private val _isLoading = MutableStateFlow(false)
     private val _isRefreshing = MutableStateFlow(false)
     private val _errorMessage = MutableStateFlow<String?>(null)
     private val _operationMessage = MutableStateFlow<String?>(null)
     private val _fileListTrigger = MutableStateFlow(0L)
-    private val _folderSizes = MutableStateFlow<Map<String, Long>>(emptyMap())
     private val _selectionState = MutableStateFlow(SelectionState())
     private val _searchQuery = MutableStateFlow("")
     private val _isSearchActive = MutableStateFlow(false)
     private val _sortState = MutableStateFlow(SortState())
+
+    /** Async-loaded file list. Populated on Dispatchers.IO so the UI thread is never blocked. */
+    private val _files = MutableStateFlow<List<File>>(emptyList())
+
+    /**
+     * Raw (unfiltered/unsorted) directory listing cache.
+     * Key = "$absolutePath|$showHidden".
+     * Holds up to 30 folder listings so back-navigation and revisits are instant.
+     * Sorted/filtered views are re-derived from this cache on Dispatchers.Default (CPU-only, fast).
+     */
+    private val rawFilesCache = LruCache<String, List<File>>(30)
+
+    private fun rawCacheKey(path: String, showHidden: Boolean) = "$path|$showHidden"
+
+    /** Evicts cache entries for [path] (both hidden-visible variants). */
+    private fun invalidateCacheFor(path: String) {
+        rawFilesCache.remove("$path|true")
+        rawFilesCache.remove("$path|false")
+    }
 
     private val prefListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
         if (key == "show_hidden_files") {
@@ -144,6 +172,20 @@ class FileExplorerViewModel(application: Application) : AndroidViewModel(applica
         viewModelScope.launch {
             _currentPath.collect { path -> startWatching(path) }
         }
+
+        // ── Async file loading ────────────────────────────────────────────────
+        // collectLatest cancels the previous load whenever path/filter/sort changes,
+        // so navigating quickly to another folder never blocks the UI.
+        viewModelScope.launch {
+            combine(
+                combine(_currentPath, _showHiddenFiles, _searchQuery, _isSearchActive, _sortState) {
+                        path, hidden, sq, searchActive, sort ->
+                    NavState(path, hidden, sq, searchActive, sort)
+                },
+                _fileListTrigger
+            ) { navState, _ -> navState }
+            .collectLatest { navState -> loadFilesAsync(navState) }
+        }
     }
 
     override fun onCleared() {
@@ -161,12 +203,11 @@ class FileExplorerViewModel(application: Application) : AndroidViewModel(applica
         },
         _clipboard,
         combine(_isLoading, _isRefreshing, _selectionState) { l, r, sel -> Triple(l, r, sel) },
-        combine(_errorMessage, _operationMessage, _fileListTrigger, _folderSizes) { err, op, _, sizes -> Triple(err, op, sizes) }
-    ) { navState, clipboard, loadingSel, extras ->
+        combine(_errorMessage, _operationMessage) { err, op -> err to op },
+        _files
+    ) { navState, clipboard, loadingSel, errOp, files ->
         val (loading, refreshing, selState) = loadingSel
-        val (error, opMsg, folderSizes) = extras
-        val dir = File(navState.path)
-        val files = loadFiles(dir, navState.showHidden, navState.searchQuery, navState.sortState)
+        val (error, opMsg) = errOp
         FileExplorerUiState(
             currentPath = navState.path,
             files = files,
@@ -176,7 +217,6 @@ class FileExplorerViewModel(application: Application) : AndroidViewModel(applica
             isRefreshing = refreshing,
             errorMessage = error,
             operationMessage = opMsg,
-            folderSizes = folderSizes,
             isSelectionMode = selState.isMode,
             selectedFilePaths = selState.paths,
             searchQuery = navState.searchQuery,
@@ -186,16 +226,72 @@ class FileExplorerViewModel(application: Application) : AndroidViewModel(applica
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), FileExplorerUiState())
 
-    private fun loadFiles(directory: File, showHidden: Boolean, searchQuery: String = "", sortState: SortState = SortState()): List<File> {
-        val allFiles = directory.listFiles() ?: return emptyList()
-        var result = allFiles.filter { showHidden || !it.isHidden }
+    /**
+     * Stale-while-revalidate loading strategy:
+     *
+     * 1. If a cached raw listing exists and no search is active → show cached result
+     *    immediately on Dispatchers.Default (CPU sort only, no disk IO, no spinner).
+     * 2. Always reload from disk on Dispatchers.IO in the background.
+     * 3. When the fresh result arrives, update the cache and the display.
+     *
+     * Result: the spinner only appears on the FIRST visit to a folder.
+     * Back-navigation and revisits are instant.
+     */
+    private suspend fun loadFilesAsync(navState: NavState) {
+        val key = rawCacheKey(navState.path, navState.showHidden)
+        val cachedRaw = rawFilesCache.get(key)
 
-        // Apply search filter
-        if (searchQuery.isNotBlank()) {
-            result = result.filter { it.name.contains(searchQuery, ignoreCase = true) }
+        if (cachedRaw != null && navState.searchQuery.isBlank()) {
+            // Serve cached data instantly — no loading indicator needed
+            _files.value = withContext(Dispatchers.Default) {
+                applySearchAndSort(cachedRaw, navState.searchQuery, navState.sortState, navState.showHidden)
+            }
+        } else {
+            // First visit or active search — show spinner while disk is read
+            if (!_isRefreshing.value) _isLoading.value = true
         }
 
-        // Build comparator: folders always first, then sort within each group
+        try {
+            // Always do a fresh disk read to pick up any changes
+            val freshRaw = withContext(Dispatchers.IO) {
+                listRawFiles(File(navState.path), navState.showHidden)
+            }
+            val sorted = withContext(Dispatchers.Default) {
+                applySearchAndSort(freshRaw, navState.searchQuery, navState.sortState, navState.showHidden)
+            }
+            // Only cache non-search results (search results depend on the query)
+            if (navState.searchQuery.isBlank()) {
+                rawFilesCache.put(key, freshRaw)
+            }
+            _files.value = sorted
+        } catch (e: CancellationException) {
+            // collectLatest cancels previous loads on navigation — must re-throw.
+            throw e
+        } catch (e: Exception) {
+            _errorMessage.value = "Failed to load folder: ${e.message}"
+            if (cachedRaw == null) _files.value = emptyList()
+        } finally {
+            _isLoading.value = false
+        }
+    }
+
+    /** Heavy IO: reads directory entries from disk and applies the hidden-file filter. */
+    private fun listRawFiles(directory: File, showHidden: Boolean): List<File> {
+        val all = directory.listFiles() ?: return emptyList()
+        return all.filter { showHidden || !it.isHidden }
+    }
+
+    /** CPU-only: applies search filter, sorts, and triggers background folder-size jobs. */
+    private fun applySearchAndSort(
+        files: List<File>,
+        searchQuery: String,
+        sortState: SortState,
+        showHidden: Boolean
+    ): List<File> {
+        val filtered = if (searchQuery.isNotBlank())
+            files.filter { it.name.contains(searchQuery, ignoreCase = true) }
+        else files
+
         val comparator: Comparator<File> = compareBy<File> { !it.isDirectory }.let { base ->
             when (sortState.option) {
                 FileSortOption.NAME ->
@@ -213,33 +309,10 @@ class FileExplorerViewModel(application: Application) : AndroidViewModel(applica
             }
         }
 
-        val filteredSorted = result.sortedWith(comparator)
-        filteredSorted.filter { it.isDirectory }.forEach { folder ->
-            computeFolderSize(folder, showHidden)
-        }
-        return filteredSorted
+        val sorted = filtered.sortedWith(comparator)
+        return sorted
     }
 
-    private fun computeFolderSize(folder: File, showHidden: Boolean) {
-        val folderPath = folder.absolutePath
-        if (_folderSizes.value.containsKey(folderPath)) return
-        viewModelScope.launch(Dispatchers.IO) {
-            try {
-                val size = calculateDirectorySize(folder, showHidden)
-                _folderSizes.update { it + (folderPath to size) }
-            } catch (_: Exception) { }
-        }
-    }
-
-    private fun calculateDirectorySize(directory: File, showHidden: Boolean): Long {
-        var size = 0L
-        val files = directory.listFiles() ?: return 0L
-        for (file in files) {
-            if (!showHidden && file.isHidden) continue
-            size += if (file.isDirectory) calculateDirectorySize(file, showHidden) else file.length()
-        }
-        return size
-    }
 
     // ── Navigation ────────────────────────────────────────────────────────────
 
@@ -365,6 +438,7 @@ class FileExplorerViewModel(application: Application) : AndroidViewModel(applica
                 }
                 _operationMessage.value = "Moved ${files.size} item(s) to Recycle Bin"
                 clearSelection()
+                clearFolderMatchCache()
                 refreshFiles()
             } catch (e: Exception) {
                 _errorMessage.value = "Delete failed: ${e.message}"
@@ -577,15 +651,20 @@ class FileExplorerViewModel(application: Application) : AndroidViewModel(applica
     fun clearClipboard() { _clipboard.value = null }
 
     private fun refreshFiles() {
+        val currentPath = _currentPath.value
+        // Evict the raw listing cache for this path so the next load reads fresh data from disk
+        invalidateCacheFor(currentPath)
         _fileListTrigger.value = System.currentTimeMillis()
-        _folderSizes.value = emptyMap()
     }
 
     fun refresh() {
         viewModelScope.launch {
             _isRefreshing.value = true
-            withContext(Dispatchers.IO) { delay(300) }
+            // Clear collection-type folder match cache so newly added/removed
+            // media files are picked up on the next traversal.
+            clearFolderMatchCache()
             refreshFiles()
+            delay(300)
             _isRefreshing.value = false
         }
     }
@@ -600,7 +679,4 @@ class FileExplorerViewModel(application: Application) : AndroidViewModel(applica
             else -> "${"%.2f".format(size / (1024.0 * 1024.0 * 1024.0))} GB"
         }
     }
-
-    fun getFolderSize(folder: File): String? =
-        _folderSizes.value[folder.absolutePath]?.let { formatFileSize(it) }
 }

@@ -24,6 +24,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -36,6 +37,7 @@ import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.BookmarkBorder
 import androidx.compose.material.icons.filled.Collections
 import androidx.compose.material.icons.filled.DeleteSweep
+import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Menu
@@ -56,6 +58,7 @@ import androidx.compose.material.icons.filled.CreateNewFolder
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.DriveFileRenameOutline
 import androidx.compose.material.icons.filled.FolderZip
+import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.NoteAdd
 import androidx.compose.material.icons.filled.PlayCircle
 import androidx.compose.material.icons.filled.Star
@@ -97,6 +100,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
@@ -125,6 +129,8 @@ import com.gmail.omkarjoshi1989.viewmodel.ClipboardOperation
 import com.gmail.omkarjoshi1989.viewmodel.FileSortOption
 import com.gmail.omkarjoshi1989.viewmodel.FileExplorerViewModel
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import java.io.File
 import java.util.Date
 
@@ -176,13 +182,22 @@ fun FileExplorerScreen(
     // Apply collection filter: show only matching files; for directories, only show them
     // if they (or any descendant) contain at least one matching file.
     // This folder-hiding behaviour is NOT applied for Applications and Recycle Bin.
-    val displayFiles = if (collectionFilter != null) {
-        uiState.files.filter { file ->
-            if (file.isDirectory) collectionFilter.folderContainsMatchingFiles(file)
-            else collectionFilter.matchesFile(file)
+    //
+    // PERFORMANCE: filtering runs on Dispatchers.IO (folderContainsMatchingFiles can
+    // recurse through thousands of files on large devices like DCIM with 1000+ items).
+    // Results are cached inside CollectionType so subsequent calls are instant.
+    var displayFiles by remember { mutableStateOf<List<File>>(emptyList()) }
+    LaunchedEffect(uiState.files, collectionFilter) {
+        displayFiles = if (collectionFilter != null) {
+            withContext(Dispatchers.IO) {
+                uiState.files.filter { file ->
+                    if (file.isDirectory) collectionFilter.folderContainsMatchingFiles(file)
+                    else collectionFilter.matchesFile(file)
+                }
+            }
+        } else {
+            uiState.files
         }
-    } else {
-        uiState.files
     }
 
     // Whether the hamburger (drawer) icon should be shown instead of back arrow
@@ -578,6 +593,7 @@ fun FileExplorerScreen(
                     FileListItem(
                         file = file,
                         viewModel = viewModel,
+                        showHiddenFiles = uiState.showHiddenFiles,
                         isFavorite = file.absolutePath in favoritePaths,
                         isSelectionMode = isSelectionMode,
                         isSelected = isSelected,
@@ -1062,6 +1078,7 @@ fun BreadcrumbBar(
 fun FileListItem(
     file: File,
     viewModel: FileExplorerViewModel,
+    showHiddenFiles: Boolean = false,
     isFavorite: Boolean = false,
     isSelectionMode: Boolean = false,
     isSelected: Boolean = false,
@@ -1104,12 +1121,27 @@ fun FileListItem(
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     } else {
-                        val showHidden = viewModel.uiState.collectAsState().value.showHiddenFiles
-                        val itemCount = file.listFiles()?.count { showHidden || !it.isHidden } ?: 0
-                        val folderSize = viewModel.getFolderSize(file)
+                        // Compute item count and direct-files-only size off the main thread
+                        data class FolderInfo(val itemCount: Int, val directSize: Long)
+                        val folderInfo by produceState<FolderInfo?>(
+                            initialValue = null,
+                            key1 = file.absolutePath,
+                            key2 = showHiddenFiles
+                        ) {
+                            value = withContext(Dispatchers.IO) {
+                                val entries = file.listFiles()
+                                    ?.filter { showHiddenFiles || !it.isHidden }
+                                    ?: emptyList()
+                                val count = entries.size
+                                // Sum sizes of direct files only — skip subdirectories
+                                val size = entries.filter { it.isFile }.sumOf { it.length() }
+                                FolderInfo(count, size)
+                            }
+                        }
                         Text(
-                            text = if (folderSize != null) "$itemCount items • $folderSize"
-                                   else "$itemCount items • Calculating…",
+                            text = if (folderInfo != null)
+                                "${folderInfo!!.itemCount} items · ${FileUtils.formatFileSize(folderInfo!!.directSize)}"
+                            else "…",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )

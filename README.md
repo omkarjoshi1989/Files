@@ -85,6 +85,8 @@
 | 3 | Settings screen                                                                                                       | ✅ Done  | Accessible from Home; manages master password toggle                                                                                  |
 | 4 | Camera button directly from app                                                                                       | Pending |                                                                                                                                       |
 | 5 | Cloud storage integration for Google Drive. Download option for folders and files from Google Drive to device storage | Pending |                                                                                                                                       |
+| 6 | support pull to refresh google drive storage                                                                          ||
+| 7 | Allow cut copy paste files and folders with progress indication notification                                          ||
 
 ## Photos / Gallery features
 
