@@ -41,6 +41,7 @@ import com.gmail.omkarjoshi1989.model.CollectionType
 import com.gmail.omkarjoshi1989.ui.screens.ApplicationsScreen
 import com.gmail.omkarjoshi1989.ui.screens.FavoritesScreen
 import com.gmail.omkarjoshi1989.ui.screens.FileExplorerScreen
+import com.gmail.omkarjoshi1989.ui.screens.GlobalSearchScreen
 import com.gmail.omkarjoshi1989.ui.screens.PinLockScreen
 import com.gmail.omkarjoshi1989.ui.screens.RecycleBinScreen
 import com.gmail.omkarjoshi1989.ui.screens.SettingsScreen
@@ -55,7 +56,7 @@ import com.gmail.omkarjoshi1989.viewmodel.FileExplorerViewModel
 import com.gmail.omkarjoshi1989.viewmodel.ZipViewModel
 
 enum class Screen {
-    FILE_EXPLORER, FAVORITES, APPLICATIONS, SETTINGS, ZIP_VIEWER, RECYCLE_BIN, COLLECTION
+    FILE_EXPLORER, FAVORITES, APPLICATIONS, SETTINGS, ZIP_VIEWER, RECYCLE_BIN, COLLECTION, GLOBAL_SEARCH
 }
 
 class FileExplorerActivity : ComponentActivity() {
@@ -120,9 +121,11 @@ class FileExplorerActivity : ComponentActivity() {
                         onPinCorrect = { isAuthenticated = true }
                     )
                 } else if (hasStoragePermission) {
+                    // Hoist the main file-explorer view-model above the `when` block so that
+                    // other screens (e.g. GlobalSearchScreen) can navigate into a folder.
+                    val fileViewModel: FileExplorerViewModel = viewModel()
                     when (currentScreen) {
                         Screen.FILE_EXPLORER -> {
-                            val fileViewModel: FileExplorerViewModel = viewModel()
 
                             // Auto-launch music player once if music from this app is already
                             // playing when the file explorer first becomes visible (e.g. user
@@ -174,6 +177,7 @@ class FileExplorerActivity : ComponentActivity() {
                                     currentScreen = Screen.COLLECTION
                                 },
                                 onNavigateToInternalStorage = null,
+                                onNavigateToGlobalSearch = { currentScreen = Screen.GLOBAL_SEARCH },
                                 onShowToast = { msg -> Toast.makeText(this, msg, Toast.LENGTH_SHORT).show() }
                             )
                         }
@@ -210,6 +214,7 @@ class FileExplorerActivity : ComponentActivity() {
                                     // Stay on COLLECTION screen, LaunchedEffect will reset path
                                 },
                                 onNavigateToInternalStorage = { currentScreen = Screen.FILE_EXPLORER },
+                                onNavigateToGlobalSearch = { currentScreen = Screen.GLOBAL_SEARCH },
                                 onShowToast = { msg -> Toast.makeText(this, msg, Toast.LENGTH_SHORT).show() }
                             )
                         }
@@ -255,6 +260,17 @@ class FileExplorerActivity : ComponentActivity() {
                         Screen.RECYCLE_BIN -> {
                             BackHandler { currentScreen = Screen.FILE_EXPLORER }
                             RecycleBinScreen(
+                                onNavigateBack = { currentScreen = Screen.FILE_EXPLORER }
+                            )
+                        }
+                        Screen.GLOBAL_SEARCH -> {
+                            BackHandler { currentScreen = Screen.FILE_EXPLORER }
+                            GlobalSearchScreen(
+                                onOpenFile = { file -> openFile(file) },
+                                onOpenFolder = { folder ->
+                                    fileViewModel.navigateTo(folder.absolutePath)
+                                    currentScreen = Screen.FILE_EXPLORER
+                                },
                                 onNavigateBack = { currentScreen = Screen.FILE_EXPLORER }
                             )
                         }

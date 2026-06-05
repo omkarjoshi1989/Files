@@ -150,7 +150,8 @@ fun FileExplorerScreen(
     collectionFilter: CollectionType? = null,
     collectionTitle: String? = null,
     onNavigateToCollection: ((CollectionType) -> Unit)? = null,
-    onNavigateToInternalStorage: (() -> Unit)? = null
+    onNavigateToInternalStorage: (() -> Unit)? = null,
+    onNavigateToGlobalSearch: (() -> Unit)? = null
 ) {
     val context = LocalContext.current
     val uiState by viewModel.uiState.collectAsState()
@@ -543,6 +544,17 @@ fun FileExplorerScreen(
                                 Icon(Icons.Filled.MoreVert, contentDescription = "More options")
                             }
                             DropdownMenu(expanded = showMoreMenu, onDismissRequest = { showMoreMenu = false }) {
+                                if (onNavigateToGlobalSearch != null) {
+                                    DropdownMenuItem(
+                                        text = { Text("Search All Files") },
+                                        onClick = {
+                                            showMoreMenu = false
+                                            onNavigateToGlobalSearch()
+                                        },
+                                        leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) }
+                                    )
+                                    HorizontalDivider()
+                                }
                                 FileSortOption.entries.forEach { option ->
                                     DropdownMenuItem(
                                         text = { Text("Sort by ${option.label}") },

@@ -23,7 +23,7 @@ A fully native Android file manager that goes beyond just listing files. It comb
 
 - 🗂️ **Full folder navigation** — tap any folder to enter, swipe back or tap the back arrow to go up
 - 🍞 **Scrollable breadcrumb bar** — always shows your current path from root; tap any segment to jump directly; `/storage/emulated/0` collapses to "Internal Storage"
-- 🔍 **Inline search** — search within the current folder in real time
+- 🔍 **Inline folder search** — search within the current folder in real time via the 🔍 icon in the top bar
 - 👁️ **Show / hide hidden files** — toggle visibility of dot-prefixed files and folders; hidden items render at 50% opacity so they're clearly distinguishable
 - 📄 **Full filenames with extensions** — up to 2-line wrap so nothing gets truncated
 - 📊 **File metadata** — file size, last modified date; folders show item count and direct-file sizes
@@ -42,6 +42,17 @@ A fully native Android file manager that goes beyond just listing files. It comb
 - 📝 **Create new file** — tap ＋ → New File → type a filename with extension → creates an empty file
 - 🗜️ **Zip** — multi-select files/folders → Zip → name your archive → creates a `.zip`
 - 📦 **Unzip** — long-press any `.zip` file → "Unzip here" → extracts contents to the same folder
+
+### 🔎 Global Search
+
+- 🌐 **Search All Files** — tap **⋮ → Search All Files** from any folder or collection to open the global search screen
+- ⚡ **Instant results as you type** — starts searching after 2 characters; previous searches are cancelled immediately so results always reflect your latest query
+- 🗂️ **Recursive deep search** — walks the entire internal storage tree, returning up to 300 matches across all folders and sub-folders
+- 🙈 **Hidden files skipped** — dot-prefixed files and folders are excluded automatically
+- 📄 **Rich result cards** — each result shows thumbnail, file name, parent folder path (relative to Internal Storage), file size, and last-modified date
+- 📁 **Folder navigation** — tapping a folder result opens the file explorer navigated directly into that folder
+- 🖼️ **File opening** — tapping a file result opens it exactly like in the regular explorer: images/videos open in the swipeable media viewer loading all same-type siblings from that folder; audio opens the music player; PDF opens the PDF viewer
+- 🔄 **Clear button** — the ✕ icon clears the query instantly and resets results
 
 ### ✅ Multi-Select & Batch Operations
 
