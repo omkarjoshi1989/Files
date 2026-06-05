@@ -92,6 +92,8 @@ import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.Player
+import androidx.media3.common.TrackSelectionOverride
+import androidx.media3.common.Tracks
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
@@ -827,6 +829,97 @@ private fun VideoPage(
                 }
             }
         }
+        exoPlayer.addListener(listener)
+        onDispose { exoPlayer.removeListener(listener) }
+    }
+
+    // ── Audio-track memory: restore the last selected audio track when the
+    //    video becomes ready, and save it whenever the user picks a new one. ──
+    DisposableEffect(exoPlayer, file.absolutePath) {
+        // Flag: set to true after we have applied the initial restore so that
+        // subsequent onTracksChanged calls (user-initiated) are saved, but the
+        // very first onChange caused by the restore itself isn't double-saved
+        // before we even finish setting up.
+        var audioTrackRestored = false
+
+        /** Persist the currently selected audio group/track index for this file. */
+        fun saveAudioTrack() {
+            try {
+                val tracks = exoPlayer.currentTracks
+                var audioGroupIdx = 0
+                for (group in tracks.groups) {
+                    if (group.type == C.TRACK_TYPE_AUDIO) {
+                        for (trackIdx in 0 until group.length) {
+                            if (group.isTrackSelected(trackIdx)) {
+                                context.getSharedPreferences(
+                                    "video_audio_tracks", Context.MODE_PRIVATE
+                                ).edit { putString(file.absolutePath, "$audioGroupIdx:$trackIdx") }
+                                return
+                            }
+                        }
+                        audioGroupIdx++
+                    }
+                }
+            } catch (_: Exception) {}
+        }
+
+        /** Apply the previously saved audio track selection (if any). */
+        fun restoreAudioTrack() {
+            try {
+                val saved = context.getSharedPreferences(
+                    "video_audio_tracks", Context.MODE_PRIVATE
+                ).getString(file.absolutePath, null) ?: return
+                val parts = saved.split(":")
+                if (parts.size != 2) return
+                val savedGroupIdx = parts[0].toIntOrNull() ?: return
+                val savedTrackIdx = parts[1].toIntOrNull() ?: return
+
+                val tracks = exoPlayer.currentTracks
+                var audioGroupIdx = 0
+                for (group in tracks.groups) {
+                    if (group.type == C.TRACK_TYPE_AUDIO) {
+                        if (audioGroupIdx == savedGroupIdx && savedTrackIdx < group.length) {
+                            // Only override if the saved track is not already selected
+                            if (!group.isTrackSelected(savedTrackIdx)) {
+                                exoPlayer.trackSelectionParameters =
+                                    exoPlayer.trackSelectionParameters
+                                        .buildUpon()
+                                        .setOverrideForType(
+                                            TrackSelectionOverride(
+                                                group.mediaTrackGroup,
+                                                savedTrackIdx
+                                            )
+                                        )
+                                        .build()
+                            }
+                            return
+                        }
+                        audioGroupIdx++
+                    }
+                }
+            } catch (_: Exception) {}
+        }
+
+        val listener = object : Player.Listener {
+            override fun onPlaybackStateChanged(state: Int) {
+                // Restore the saved audio track exactly once, as soon as tracks
+                // are available (STATE_READY).
+                if (state == Player.STATE_READY && !audioTrackRestored) {
+                    restoreAudioTrack()
+                    audioTrackRestored = true
+                }
+            }
+
+            override fun onTracksChanged(tracks: Tracks) {
+                // Save the selected audio track whenever it changes, but only
+                // AFTER the initial restore so we don't overwrite a saved
+                // preference with the default before restoring it.
+                if (audioTrackRestored) {
+                    saveAudioTrack()
+                }
+            }
+        }
+
         exoPlayer.addListener(listener)
         onDispose { exoPlayer.removeListener(listener) }
     }

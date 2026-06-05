@@ -15,12 +15,23 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
-import com.gmail.omkarjoshi1989.ui.screens.MediaViewerScreen
+import com.gmail.omkarjoshi1989.ui.screens.MusicPlayerScreen
 import com.gmail.omkarjoshi1989.ui.theme.FilesTheme
 import com.gmail.omkarjoshi1989.util.FileUtils
 import java.io.File
 
-class MediaViewerActivity : ComponentActivity() {
+/**
+ * A dedicated Activity for music (audio) playback.
+ *
+ * Accepts the same Intent extras as [MediaViewerActivity] so that
+ * [service.MusicPlaybackService] and other launchers can point here
+ * without any API changes.
+ *
+ * All UI is rendered via [MusicPlayerScreen] — a Jetpack Compose screen
+ * that contains the complete audio-player logic (looping pager, immersive
+ * mode, portrait/landscape layouts, service binding, etc.).
+ */
+class MusicPlayerActivity : ComponentActivity() {
 
     companion object {
         const val EXTRA_FOLDER_PATH = "folder_path"
@@ -29,7 +40,7 @@ class MediaViewerActivity : ComponentActivity() {
         const val EXTRA_SINGLE_FILE_MODE = "single_file_mode"
         /** When true, the music player opens without auto-playing — waits for user to tap play. */
         const val EXTRA_NO_AUTOPLAY = "no_autoplay"
-        private const val NOTIFICATION_PERMISSION_REQUEST_CODE = 100
+        private const val NOTIFICATION_PERMISSION_REQUEST_CODE = 101
     }
 
     private var mediaFiles by mutableStateOf<List<File>>(emptyList())
@@ -60,7 +71,7 @@ class MediaViewerActivity : ComponentActivity() {
         setContent {
             FilesTheme {
                 key(screenKey) {
-                    MediaViewerScreen(
+                    MusicPlayerScreen(
                         mediaFiles = mediaFiles,
                         initialIndex = initialIndex,
                         loopEnabled = loopEnabled,
@@ -79,19 +90,17 @@ class MediaViewerActivity : ComponentActivity() {
         if (intent.action == Intent.ACTION_VIEW && intent.data != null) {
             val uri = intent.data!!
             val resolvedFile = FileUtils.resolveUriToFile(this, uri) ?: return false
-            if (!FileUtils.isImageFile(resolvedFile) && !FileUtils.isVideoFile(resolvedFile)) {
-                return false
-            }
+            if (!FileUtils.isAudioFile(resolvedFile)) return false
 
-            // Try to load all sibling files of the same type from the same folder
+            // Try to load all sibling audio files from the same folder
             val folder = resolvedFile.parentFile
             val files: List<File> = if (
                 folder != null &&
                 folder.canRead() &&
                 !resolvedFile.absolutePath.startsWith(cacheDir.absolutePath)
             ) {
-                // Load all images or all videos (matching type) from the same folder
-                FileUtils.getFilesOfSameType(this, folder, resolvedFile)
+                // Load every audio track in the same folder
+                FileUtils.getAudioFilesInFolder(this, folder)
                     .ifEmpty { listOf(resolvedFile) }
             } else {
                 // Fallback: file came from a temp/cache location — show it alone
@@ -114,19 +123,24 @@ class MediaViewerActivity : ComponentActivity() {
 
         val files: List<File> = if (singleFileMode) {
             // Only open the one tapped file — no sibling swiping
-            if (targetFile.exists()) listOf(targetFile) else emptyList()
+            if (targetFile.exists() && FileUtils.isAudioFile(targetFile)) listOf(targetFile)
+            else emptyList()
         } else {
             val folderPath = intent.getStringExtra(EXTRA_FOLDER_PATH) ?: return false
             val folder = File(folderPath)
-            // Auto-detect file type and only load files of the same type
-            FileUtils.getFilesOfSameType(this, folder, targetFile)
+            // Load all audio files in the folder (same type as the tapped file)
+            FileUtils.getAudioFilesInFolder(this, folder).ifEmpty {
+                // Folder gone / unreadable — fall back to the single tapped file
+                if (targetFile.exists() && FileUtils.isAudioFile(targetFile)) listOf(targetFile)
+                else emptyList()
+            }
         }
 
         if (files.isEmpty()) return false
 
         mediaFiles = files
         initialIndex = files.indexOfFirst { it.absolutePath == filePath }.coerceAtLeast(0)
-        // Enable loop swiping for all media types (visual media and audio)
+        // Enable loop swiping so the user can swipe endlessly through tracks
         loopEnabled = true
         // Respect no-autoplay flag (e.g. when launched from file explorer toolbar)
         autoPlay = !intent.getBooleanExtra(EXTRA_NO_AUTOPLAY, false)
@@ -149,3 +163,4 @@ class MediaViewerActivity : ComponentActivity() {
         }
     }
 }
+

@@ -1,6 +1,10 @@
 package com.gmail.omkarjoshi1989
 
+import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
+import android.os.ParcelFileDescriptor
+import android.provider.OpenableColumns
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -10,12 +14,16 @@ import java.io.File
 
 /**
  * A dedicated activity for viewing a single PDF file in-app.
- * No sibling-file swiping — only the tapped PDF is opened.
+ *
+ * Can be launched:
+ *  - Internally via [EXTRA_FILE_PATH] extra (from within the app).
+ *  - Externally via ACTION_VIEW with a content:// or file:// URI
+ *    (e.g. from Gmail, WhatsApp, Downloads, or any file manager).
  */
 class PdfViewerActivity : ComponentActivity() {
 
     companion object {
-        /** Absolute path of the PDF file to open. */
+        /** Absolute path of the PDF file to open (internal launch). */
         const val EXTRA_FILE_PATH = "file_path"
     }
 
@@ -23,20 +31,62 @@ class PdfViewerActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
 
+        // ── 1. Internal launch via explicit file path ───────────────────
         val filePath = intent?.getStringExtra(EXTRA_FILE_PATH)
-        if (filePath == null) { finish(); return }
-
-        val file = File(filePath)
-        if (!file.exists() || !file.isFile) { finish(); return }
-
-        setContent {
-            FilesTheme {
-                PdfViewerScreen(
-                    file = file,
-                    onClose = { finish() }
-                )
+        if (filePath != null) {
+            val file = File(filePath)
+            if (!file.exists() || !file.isFile) { finish(); return }
+            setContent {
+                FilesTheme {
+                    PdfViewerScreen(file = file, onClose = { finish() })
+                }
             }
+            return
+        }
+
+        // ── 2. External launch via ACTION_VIEW intent ───────────────────
+        if (intent?.action == Intent.ACTION_VIEW) {
+            val uri: Uri = intent.data ?: run { finish(); return }
+
+            val (displayName, openPfd) = when (uri.scheme?.lowercase()) {
+                "file" -> {
+                    val file = File(uri.path ?: run { finish(); return })
+                    Pair(file.name) { ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY) }
+                }
+                "content" -> {
+                    val name = resolveDisplayName(uri)
+                    Pair(name) { contentResolver.openFileDescriptor(uri, "r") }
+                }
+                else -> { finish(); return }
+            }
+
+            setContent {
+                FilesTheme {
+                    PdfViewerScreen(
+                        displayName = displayName,
+                        openPfd = openPfd,
+                        onClose = { finish() }
+                    )
+                }
+            }
+            return
+        }
+
+        // Nothing matched — close
+        finish()
+    }
+
+    /** Queries the content resolver for a human-readable file name. */
+    private fun resolveDisplayName(uri: Uri): String {
+        return try {
+            contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)
+                ?.use { cursor ->
+                    if (cursor.moveToFirst()) {
+                        cursor.getString(cursor.getColumnIndexOrThrow(OpenableColumns.DISPLAY_NAME))
+                    } else null
+                } ?: uri.lastPathSegment ?: "document.pdf"
+        } catch (_: Exception) {
+            uri.lastPathSegment ?: "document.pdf"
         }
     }
 }
-

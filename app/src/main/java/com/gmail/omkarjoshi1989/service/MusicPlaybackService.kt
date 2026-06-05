@@ -13,7 +13,7 @@ import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
-import com.gmail.omkarjoshi1989.MediaViewerActivity
+import com.gmail.omkarjoshi1989.MusicPlayerActivity
 import com.gmail.omkarjoshi1989.util.FileUtils
 import com.gmail.omkarjoshi1989.util.MusicResumeManager
 import java.io.File
@@ -70,12 +70,14 @@ class MusicPlaybackService : MediaSessionService() {
                 val file = File(filePath)
                 val folderPath = file.parent ?: return
 
-                // Persist last-played info so the File Explorer can offer a resume button
-                MusicResumeManager.saveLastPlayed(this@MusicPlaybackService, folderPath, filePath)
+                // Persist last-played info.  Use saveLastPlayedFile so that when the
+                // same track is reloaded for resume (PLAYLIST_CHANGED reason), the
+                // already-saved position offset is NOT clobbered.
+                MusicResumeManager.saveLastPlayedFile(this@MusicPlaybackService, folderPath, filePath)
 
-                val intent = Intent(this@MusicPlaybackService, MediaViewerActivity::class.java).apply {
-                    putExtra(MediaViewerActivity.EXTRA_FOLDER_PATH, folderPath)
-                    putExtra(MediaViewerActivity.EXTRA_FILE_PATH, filePath)
+                val intent = Intent(this@MusicPlaybackService, MusicPlayerActivity::class.java).apply {
+                    putExtra(MusicPlayerActivity.EXTRA_FOLDER_PATH, folderPath)
+                    putExtra(MusicPlayerActivity.EXTRA_FILE_PATH, filePath)
                     flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
                 }
 
@@ -87,6 +89,19 @@ class MusicPlaybackService : MediaSessionService() {
                 )
 
                 session.setSessionActivity(pendingIntent)
+            }
+
+            override fun onIsPlayingChanged(playing: Boolean) {
+                if (!playing) {
+                    // Persist position whenever playback stops (pause, audio-focus loss,
+                    // Bluetooth disconnect, etc.) so the next resume is accurate.
+                    val p = mediaSession?.player ?: return
+                    if (p.currentPosition > 0) {
+                        MusicResumeManager.savePosition(
+                            this@MusicPlaybackService, p.currentPosition
+                        )
+                    }
+                }
             }
         })
     }
@@ -165,11 +180,13 @@ class MusicPlaybackService : MediaSessionService() {
                 .build()
         }
 
-        // Start from the last-played track; fall back to index 0 if it's not in the list
+        // Start from the last-played track and resume from the saved position.
+        // Falls back to index 0 / position 0 if the file is not in the list.
         val startIndex = audioFiles.indexOfFirst { it.absolutePath == lastFile.absolutePath }
             .coerceAtLeast(0)
+        val resumePositionMs = MusicResumeManager.getLastPositionMs(this)
 
-        player.setMediaItems(mediaItems, startIndex, 0L)
+        player.setMediaItems(mediaItems, startIndex, resumePositionMs)
         player.repeatMode = Player.REPEAT_MODE_ALL   // loop the whole folder
         player.prepare()
         player.play()
@@ -181,12 +198,22 @@ class MusicPlaybackService : MediaSessionService() {
 
     override fun onTaskRemoved(rootIntent: Intent?) {
         val player = mediaSession?.player
+        if (player != null && player.currentPosition > 0) {
+            // Persist position so the next launch can resume from here.
+            MusicResumeManager.savePosition(this, player.currentPosition)
+        }
         if (player == null || !player.playWhenReady || player.mediaItemCount == 0) {
             stopSelf()
         }
     }
 
     override fun onDestroy() {
+        // Final position persist before the service dies.
+        mediaSession?.player?.let { player ->
+            if (player.currentPosition > 0) {
+                MusicResumeManager.savePosition(this, player.currentPosition)
+            }
+        }
         mediaSession?.run {
             player.release()
             release()

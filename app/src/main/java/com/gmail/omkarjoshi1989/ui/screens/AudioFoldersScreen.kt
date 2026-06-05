@@ -47,7 +47,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.gmail.omkarjoshi1989.MediaViewerActivity
+import com.gmail.omkarjoshi1989.MusicPlayerActivity
 import com.gmail.omkarjoshi1989.util.FileUtils
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -229,13 +229,13 @@ fun AudioFoldersScreen(
                                     AudioFileItem(
                                         file = item.file,
                                         onClick = {
-                                            val intent = Intent(context, MediaViewerActivity::class.java).apply {
+                                            val intent = Intent(context, MusicPlayerActivity::class.java).apply {
                                                 putExtra(
-                                                    MediaViewerActivity.EXTRA_FOLDER_PATH,
+                                                    MusicPlayerActivity.EXTRA_FOLDER_PATH,
                                                     currentDir.absolutePath
                                                 )
                                                 putExtra(
-                                                    MediaViewerActivity.EXTRA_FILE_PATH,
+                                                    MusicPlayerActivity.EXTRA_FILE_PATH,
                                                     item.file.absolutePath
                                                 )
                                             }

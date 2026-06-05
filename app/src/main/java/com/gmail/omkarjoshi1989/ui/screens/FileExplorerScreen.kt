@@ -119,6 +119,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.gmail.omkarjoshi1989.MediaViewerActivity
+import com.gmail.omkarjoshi1989.MusicPlayerActivity
 import com.gmail.omkarjoshi1989.model.CollectionType
 import com.gmail.omkarjoshi1989.model.folderContainsMatchingFiles
 import com.gmail.omkarjoshi1989.model.matchesFile
@@ -504,10 +505,10 @@ fun FileExplorerScreen(
                                 val lastFile = MusicResumeManager.getLastFilePath(context)
                                 val lastFolder = MusicResumeManager.getLastFolderPath(context)
                                 if (lastFile != null && lastFolder != null && java.io.File(lastFile).exists()) {
-                                    val intent = Intent(context, MediaViewerActivity::class.java).apply {
-                                        putExtra(MediaViewerActivity.EXTRA_FILE_PATH, lastFile)
-                                        putExtra(MediaViewerActivity.EXTRA_FOLDER_PATH, lastFolder)
-                                        putExtra(MediaViewerActivity.EXTRA_NO_AUTOPLAY, true)
+                                    val intent = Intent(context, MusicPlayerActivity::class.java).apply {
+                                        putExtra(MusicPlayerActivity.EXTRA_FILE_PATH, lastFile)
+                                        putExtra(MusicPlayerActivity.EXTRA_FOLDER_PATH, lastFolder)
+                                        putExtra(MusicPlayerActivity.EXTRA_NO_AUTOPLAY, true)
                                     }
                                     context.startActivity(intent)
                                 } else {
@@ -1215,7 +1216,10 @@ fun FileListItem(
                         }
                         Text(
                             text = if (folderInfo != null)
-                                "${folderInfo!!.itemCount} items · ${FileUtils.formatFileSize(folderInfo!!.directSize)}"
+                                if (folderInfo!!.directSize > 0)
+                                    "${folderInfo!!.itemCount} items · ${FileUtils.formatFileSize(folderInfo!!.directSize)}"
+                                else
+                                    "${folderInfo!!.itemCount} items"
                             else "…",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant

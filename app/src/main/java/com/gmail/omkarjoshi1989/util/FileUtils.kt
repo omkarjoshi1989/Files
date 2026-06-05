@@ -3,6 +3,7 @@ package com.gmail.omkarjoshi1989.util
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.provider.MediaStore
 import android.webkit.MimeTypeMap
 import androidx.core.content.FileProvider
 import java.io.File
@@ -158,4 +159,54 @@ object FileUtils {
      */
     fun stripNumericPrefix(name: String): String =
         name.replace(Regex("^(\\d+[\\s._\\-]*)+"), "").trim()
+
+    /**
+     * Resolves a [Uri] (content:// or file://) received from an external ACTION_VIEW intent
+     * into a [File] pointing to the actual file on disk.
+     *
+     * For content:// URIs the MediaStore DATA column is queried first; if absent the
+     * file is copied to the app's cache dir so the existing viewers can open it.
+     *
+     * Returns null if the URI cannot be resolved.
+     */
+    fun resolveUriToFile(context: Context, uri: Uri): File? {
+        return when (uri.scheme?.lowercase()) {
+            "file" -> uri.path?.let { File(it) }
+            "content" -> {
+                // Try the MediaStore real-path column first (works for most local files)
+                try {
+                    context.contentResolver.query(
+                        uri,
+                        arrayOf(MediaStore.MediaColumns.DATA),
+                        null, null, null
+                    )?.use { cursor ->
+                        if (cursor.moveToFirst()) {
+                            val idx = cursor.getColumnIndex(MediaStore.MediaColumns.DATA)
+                            if (idx >= 0) {
+                                val path = cursor.getString(idx)
+                                if (!path.isNullOrBlank()) return File(path)
+                            }
+                        }
+                        null
+                    }
+                } catch (_: Exception) { null }
+
+                // Fallback: copy to cache so ExoPlayer / Coil can read it
+                ?: run {
+                    try {
+                        val mimeType = context.contentResolver.getType(uri) ?: "application/octet-stream"
+                        val ext = MimeTypeMap.getSingleton()
+                            .getExtensionFromMimeType(mimeType) ?: "tmp"
+                        val displayName = uri.lastPathSegment?.takeIf { it.isNotBlank() } ?: "file"
+                        val cacheFile = File(context.cacheDir, "open_${displayName.take(40)}.$ext")
+                        context.contentResolver.openInputStream(uri)?.use { input ->
+                            cacheFile.outputStream().use { output -> input.copyTo(output) }
+                        }
+                        cacheFile
+                    } catch (_: Exception) { null }
+                }
+            }
+            else -> null
+        }
+    }
 }

@@ -301,15 +301,26 @@ class FileExplorerActivity : ComponentActivity() {
             }
             startActivity(intent)
         } else if (FileUtils.isMediaFile(file)) {
-            // Open in built-in media viewer
-            val intent = Intent(this, MediaViewerActivity::class.java).apply {
-                putExtra(MediaViewerActivity.EXTRA_FILE_PATH, file.absolutePath)
-                if (file.parentFile != null) {
-                    // Load all same-type files in the folder
-                    putExtra(MediaViewerActivity.EXTRA_FOLDER_PATH, file.parentFile!!.absolutePath)
+            if (FileUtils.isAudioFile(file)) {
+                // Audio files open in the dedicated music player
+                val intent = Intent(this, MusicPlayerActivity::class.java).apply {
+                    putExtra(MusicPlayerActivity.EXTRA_FILE_PATH, file.absolutePath)
+                    if (file.parentFile != null) {
+                        putExtra(MusicPlayerActivity.EXTRA_FOLDER_PATH, file.parentFile!!.absolutePath)
+                    }
                 }
+                startActivity(intent)
+            } else {
+                // Images and videos open in the built-in media viewer
+                val intent = Intent(this, MediaViewerActivity::class.java).apply {
+                    putExtra(MediaViewerActivity.EXTRA_FILE_PATH, file.absolutePath)
+                    if (file.parentFile != null) {
+                        // Load all same-type files in the folder
+                        putExtra(MediaViewerActivity.EXTRA_FOLDER_PATH, file.parentFile!!.absolutePath)
+                    }
+                }
+                startActivity(intent)
             }
-            startActivity(intent)
         } else {
             try {
                 val intent = FileUtils.getOpenFileIntent(this, file)
