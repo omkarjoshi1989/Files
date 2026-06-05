@@ -1,3 +1,11 @@
 <resources>
     <string name="app_name">Files</string>
+    <string name="widget_label">Music Player</string>
+    <string name="widget_description">Controls music playback from the home screen</string>
+    <string name="widget_no_track">No track playing</string>
+    <string name="widget_album_art_desc">Album art</string>
+    <string name="widget_play_pause_desc">Play / Pause</string>
+    <string name="widget_prev_desc">Previous track</string>
+    <string name="widget_next_desc">Next track</string>
+    <string name="widget_repeat_desc">Repeat</string>
 </resources>

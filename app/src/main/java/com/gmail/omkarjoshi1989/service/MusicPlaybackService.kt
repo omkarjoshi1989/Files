@@ -1,6 +1,8 @@
 package com.gmail.omkarjoshi1989.service
 
 import android.app.PendingIntent
+import android.appwidget.AppWidgetManager
+import android.content.ComponentName
 import android.content.Intent
 import android.view.KeyEvent
 import androidx.annotation.OptIn
@@ -16,6 +18,7 @@ import androidx.media3.session.MediaSessionService
 import com.gmail.omkarjoshi1989.MusicPlayerActivity
 import com.gmail.omkarjoshi1989.util.FileUtils
 import com.gmail.omkarjoshi1989.util.MusicResumeManager
+import com.gmail.omkarjoshi1989.widget.MusicPlayerWidget
 import java.io.File
 
 /**
@@ -31,6 +34,29 @@ class MusicPlaybackService : MediaSessionService() {
         /** Sent by [com.gmail.omkarjoshi1989.receiver.MediaButtonEventReceiver]
          *  to cold-start this service and resume the last played track. */
         const val ACTION_PLAY_LAST = "com.gmail.omkarjoshi1989.action.PLAY_LAST"
+
+        // ── Widget control actions ──────────────────────────────────────────
+        const val ACTION_WIDGET_PLAY_PAUSE = "com.gmail.omkarjoshi1989.action.WIDGET_PLAY_PAUSE"
+        const val ACTION_WIDGET_PREVIOUS   = "com.gmail.omkarjoshi1989.action.WIDGET_PREVIOUS"
+        const val ACTION_WIDGET_NEXT       = "com.gmail.omkarjoshi1989.action.WIDGET_NEXT"
+        const val ACTION_WIDGET_REPEAT     = "com.gmail.omkarjoshi1989.action.WIDGET_REPEAT"
+
+        /**
+         * Reflects the live playback state of the service's ExoPlayer within this process.
+         * Set to true when the player reports isPlaying = true, false otherwise.
+         * Resets to false whenever the service is destroyed or the process restarts.
+         */
+        @Volatile
+        var isCurrentlyPlaying: Boolean = false
+            private set
+
+        /**
+         * True when the player's repeat mode is REPEAT_MODE_ONE (single-track loop).
+         * False for REPEAT_MODE_ALL (default). Exposed for the home-screen widget.
+         */
+        @Volatile
+        var widgetRepeatModeOne: Boolean = false
+            private set
     }
 
     private var mediaSession: MediaSession? = null
@@ -89,9 +115,11 @@ class MusicPlaybackService : MediaSessionService() {
                 )
 
                 session.setSessionActivity(pendingIntent)
+                updateWidgets()
             }
 
             override fun onIsPlayingChanged(playing: Boolean) {
+                isCurrentlyPlaying = playing
                 if (!playing) {
                     // Persist position whenever playback stops (pause, audio-focus loss,
                     // Bluetooth disconnect, etc.) so the next resume is accurate.
@@ -102,18 +130,27 @@ class MusicPlaybackService : MediaSessionService() {
                         )
                     }
                 }
+                updateWidgets()
+            }
+
+            override fun onRepeatModeChanged(mode: Int) {
+                widgetRepeatModeOne = (mode == Player.REPEAT_MODE_ONE)
+                updateWidgets()
             }
         })
     }
 
     /**
      * Handles [ACTION_PLAY_LAST] sent by [com.gmail.omkarjoshi1989.receiver.MediaButtonEventReceiver].
-     * This is called both on cold starts (service was dead) and when the service is running
-     * but the MediaSession became inactive (e.g. after a Bluetooth disconnect → pause).
+     * Also handles widget button actions forwarded from [MusicPlayerWidget].
      */
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        if (intent?.action == ACTION_PLAY_LAST) {
-            resumeOrPlayLast()
+        when (intent?.action) {
+            ACTION_PLAY_LAST         -> resumeOrPlayLast()
+            ACTION_WIDGET_PLAY_PAUSE -> handleWidgetPlayPause()
+            ACTION_WIDGET_PREVIOUS   -> handleWidgetPrevious()
+            ACTION_WIDGET_NEXT       -> handleWidgetNext()
+            ACTION_WIDGET_REPEAT     -> handleWidgetRepeat()
         }
         return super.onStartCommand(intent, flags, startId)
     }
@@ -192,6 +229,66 @@ class MusicPlaybackService : MediaSessionService() {
         player.play()
     }
 
+    // ── Widget control handlers ───────────────────────────────────────────────
+
+    private fun handleWidgetPlayPause() {
+        val player = mediaSession?.player
+        if (player == null || player.mediaItemCount == 0) {
+            // Service cold-started by widget tap — resume last track
+            resumeOrPlayLast()
+        } else {
+            if (player.isPlaying) player.pause() else {
+                when (player.playbackState) {
+                    Player.STATE_IDLE   -> { player.prepare(); player.play() }
+                    Player.STATE_ENDED  -> { player.seekToDefaultPosition(); player.play() }
+                    else                -> player.play()
+                }
+            }
+        }
+        updateWidgets()
+    }
+
+    private fun handleWidgetPrevious() {
+        mediaSession?.player?.let { p ->
+            try { p.seekToPrevious() } catch (_: Exception) {}
+        }
+        updateWidgets()
+    }
+
+    private fun handleWidgetNext() {
+        mediaSession?.player?.let { p ->
+            try { p.seekToNext() } catch (_: Exception) {}
+        }
+        updateWidgets()
+    }
+
+    private fun handleWidgetRepeat() {
+        mediaSession?.player?.let { p ->
+            val newMode = if (p.repeatMode == Player.REPEAT_MODE_ONE)
+                Player.REPEAT_MODE_ALL else Player.REPEAT_MODE_ONE
+            p.repeatMode = newMode
+            widgetRepeatModeOne = (newMode == Player.REPEAT_MODE_ONE)
+        }
+        updateWidgets()
+    }
+
+    /** Sends a broadcast that triggers all home-screen widget instances to redraw. */
+    private fun updateWidgets() {
+        try {
+            val manager = AppWidgetManager.getInstance(this)
+            val ids = manager.getAppWidgetIds(
+                ComponentName(this, MusicPlayerWidget::class.java)
+            )
+            if (ids.isNotEmpty()) {
+                val intent = Intent(this, MusicPlayerWidget::class.java).apply {
+                    action = AppWidgetManager.ACTION_APPWIDGET_UPDATE
+                    putExtra(AppWidgetManager.EXTRA_APPWIDGET_IDS, ids)
+                }
+                sendBroadcast(intent)
+            }
+        } catch (_: Exception) {}
+    }
+
     override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaSession? {
         return mediaSession
     }
@@ -208,6 +305,7 @@ class MusicPlaybackService : MediaSessionService() {
     }
 
     override fun onDestroy() {
+        isCurrentlyPlaying = false
         // Final position persist before the service dies.
         mediaSession?.player?.let { player ->
             if (player.currentPosition > 0) {

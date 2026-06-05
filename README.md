@@ -118,6 +118,29 @@ The hamburger menu (≡) gives you quick access to organized views of your devic
 - 📐 **Landscape layout** — album art on the left, controls on the right in landscape orientation
 - 🎵 **Track numbering** — shows "2 / 14" style track counter in the top bar
 
+### 🪟 Home-Screen Music Widget
+
+Add the **Music Player** widget to your Android home screen for instant playback control — no need to open the app.
+
+```
+╔══════════════════════════════════════════════╗
+║  ┌──────┐  Song Title (centered)             ║
+║  │Album │  [◀◀]   [ ▶/⏸ ]   [▶▶]   [🔁]   ║
+║  │  Art │                                    ║
+║  └──────┘                                    ║
+╚══════════════════════════════════════════════╝
+```
+
+- 🖼️ **Album art** — embedded cover art shown on the left in a compact rounded tile; falls back to a music note icon when none is embedded
+- 🏷️ **Track name** — file name displayed centre-aligned next to the art, ellipsised when it overflows
+- ⏮️ **Previous** — skip to the previous track in the current folder playlist
+- ⏯️ **Play / Pause** — large orange circular button; correctly resumes from the last saved position even when the playback service was not running
+- ⏭️ **Next** — skip to the next track
+- 🔂 **Repeat toggle** — switches between Repeat All and Repeat One; button tints orange when Repeat One is active
+- 🔄 **Live sync** — widget icon and track name update automatically whenever the service changes track, pauses, or resumes — no manual refresh needed
+- 📲 **Tap to open** — tapping the album art or track name launches the full Music Player screen for the current track
+- 🔌 **Cold-start aware** — pressing Play on the widget while the service is stopped automatically resumes the last played track from the saved position
+
 ---
 
 ## 📄 PDF Viewer
@@ -180,6 +203,7 @@ The hamburger menu (≡) gives you quick access to organized views of your devic
 | UI Framework | **Jetpack Compose** + **Material 3** |
 | Architecture | **ViewModel** + **StateFlow** |
 | Media Playback | **Media3 ExoPlayer** + **MediaSessionService** |
+| Home Widget | **AppWidgetProvider** + **RemoteViews** |
 | Image Loading | **Coil** (images + video frame thumbnails) |
 | PDF Rendering | **PdfBox Android** |
 | Storage Access | **SAF (Storage Access Framework)** + legacy `java.io.File` |
@@ -199,6 +223,6 @@ The hamburger menu (≡) gives you quick access to organized views of your devic
 
 <div align="center">
 
-Built with ❤️ using Jetpack Compose · Material You · ExoPlayer
+Built with ❤️ using Jetpack Compose · Material You · ExoPlayer · AppWidgetProvider
 
 </div>

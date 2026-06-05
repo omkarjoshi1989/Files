@@ -47,8 +47,10 @@ import com.gmail.omkarjoshi1989.ui.screens.SettingsScreen
 import com.gmail.omkarjoshi1989.ui.screens.ZipViewerScreen
 import com.gmail.omkarjoshi1989.ui.theme.FilesTheme
 import com.gmail.omkarjoshi1989.util.FileUtils
+import com.gmail.omkarjoshi1989.util.MusicResumeManager
 import com.gmail.omkarjoshi1989.util.SettingsManager
 import com.gmail.omkarjoshi1989.util.ThemeMode
+import com.gmail.omkarjoshi1989.service.MusicPlaybackService
 import com.gmail.omkarjoshi1989.viewmodel.FileExplorerViewModel
 import com.gmail.omkarjoshi1989.viewmodel.ZipViewModel
 
@@ -68,6 +70,14 @@ class FileExplorerActivity : ComponentActivity() {
 
     /** Timestamp of the last back-press when at the explorer root (for double-back-to-exit). */
     private var lastBackPressTime = 0L
+
+    /**
+     * Guards the one-shot auto-launch of [MusicPlayerActivity] when the app is
+     * opened while music from this app is already playing.  Set to true the first
+     * time the FILE_EXPLORER screen is composed so the check never fires again for
+     * the lifetime of this activity instance.
+     */
+    private var hasAutoLaunchedMusicPlayer = false
 
     private val prefsListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
         if (key == "theme_mode") themeMode = SettingsManager.getThemeMode(this)
@@ -113,6 +123,33 @@ class FileExplorerActivity : ComponentActivity() {
                     when (currentScreen) {
                         Screen.FILE_EXPLORER -> {
                             val fileViewModel: FileExplorerViewModel = viewModel()
+
+                            // Auto-launch music player once if music from this app is already
+                            // playing when the file explorer first becomes visible (e.g. user
+                            // opens the app while music is playing in the background).
+                            // Fires only once per activity instance because hasAutoLaunchedMusicPlayer
+                            // is an activity-level flag (not Compose state), so it survives
+                            // screen navigations within the same task.
+                            LaunchedEffect(Unit) {
+                                if (!hasAutoLaunchedMusicPlayer) {
+                                    hasAutoLaunchedMusicPlayer = true
+                                    if (MusicPlaybackService.isCurrentlyPlaying) {
+                                        val filePath = MusicResumeManager.getLastFilePath(this@FileExplorerActivity)
+                                        val folderPath = MusicResumeManager.getLastFolderPath(this@FileExplorerActivity)
+                                        if (filePath != null && folderPath != null) {
+                                            val musicIntent = Intent(
+                                                this@FileExplorerActivity,
+                                                MusicPlayerActivity::class.java
+                                            ).apply {
+                                                putExtra(MusicPlayerActivity.EXTRA_FILE_PATH, filePath)
+                                                putExtra(MusicPlayerActivity.EXTRA_FOLDER_PATH, folderPath)
+                                            }
+                                            startActivity(musicIntent)
+                                        }
+                                    }
+                                }
+                            }
+
                             BackHandler {
                                 val state = fileViewModel.uiState.value
                                 when {

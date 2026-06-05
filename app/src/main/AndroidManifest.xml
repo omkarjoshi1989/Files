@@ -150,6 +150,23 @@
             </intent-filter>
         </receiver>
 
+        <!-- Music player home-screen widget -->
+        <receiver
+            android:name=".widget.MusicPlayerWidget"
+            android:exported="true"
+            android:label="@string/widget_label">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+                <action android:name="com.gmail.omkarjoshi1989.widget.ACTION_PLAY_PAUSE" />
+                <action android:name="com.gmail.omkarjoshi1989.widget.ACTION_PREVIOUS" />
+                <action android:name="com.gmail.omkarjoshi1989.widget.ACTION_NEXT" />
+                <action android:name="com.gmail.omkarjoshi1989.widget.ACTION_REPEAT" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_music_player_info" />
+        </receiver>
+
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.fileprovider"

@@ -1,5 +1,7 @@
 package com.gmail.omkarjoshi1989.ui.screens
 
+import android.content.Intent
+import android.net.Uri
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -7,6 +9,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.text.ClickableText
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.DarkMode
@@ -36,7 +39,11 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import com.gmail.omkarjoshi1989.util.SettingsManager
 import com.gmail.omkarjoshi1989.util.ThemeMode
@@ -85,6 +92,37 @@ fun SettingsScreen(
                 .fillMaxSize()
                 .padding(innerPadding)
         ) {
+            // Releases hyperlink
+            val releasesUrl = "https://github.com/omkarjoshi1989/Files/releases"
+            val annotatedString = buildAnnotatedString {
+                pushStringAnnotation(tag = "URL", annotation = releasesUrl)
+                withStyle(
+                    style = SpanStyle(
+                        color = MaterialTheme.colorScheme.primary,
+                        textDecoration = TextDecoration.Underline
+                    )
+                ) {
+                    append(releasesUrl)
+                }
+                pop()
+            }
+            ClickableText(
+                text = annotatedString,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 12.dp),
+                style = MaterialTheme.typography.bodyMedium.copy(
+                    textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                ),
+                onClick = { offset ->
+                    annotatedString.getStringAnnotations(tag = "URL", start = offset, end = offset)
+                        .firstOrNull()?.let { annotation ->
+                            val intent = Intent(Intent.ACTION_VIEW, Uri.parse(annotation.item))
+                            context.startActivity(intent)
+                        }
+                }
+            )
+
             // Master Password setting
             Row(
                 modifier = Modifier

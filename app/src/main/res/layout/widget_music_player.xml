@@ -1,0 +1,101 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="horizontal"
+    android:background="@drawable/widget_music_background"
+    android:padding="10dp"
+    android:gravity="center_vertical">
+
+    <!-- Album Art (left side, smaller size) -->
+    <ImageView
+        android:id="@+id/widget_album_art"
+        android:layout_width="62dp"
+        android:layout_height="62dp"
+        android:scaleType="centerCrop"
+        android:clipToOutline="true"
+        android:background="@drawable/widget_album_art_bg"
+        android:src="@drawable/ic_widget_music_note"
+        android:contentDescription="Album art" />
+
+    <!-- Right section: file name (center) + control buttons -->
+    <LinearLayout
+        android:layout_width="0dp"
+        android:layout_weight="1"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:layout_marginStart="10dp"
+        android:gravity="center_horizontal">
+
+        <!-- File name, center aligned -->
+        <TextView
+            android:id="@+id/widget_track_name"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:textColor="#FFFFFFFF"
+            android:textSize="13sp"
+            android:gravity="center"
+            android:maxLines="1"
+            android:ellipsize="end"
+            android:text="No track" />
+
+        <!-- Playback control buttons -->
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:layout_marginTop="8dp"
+            android:gravity="center"
+            android:baselineAligned="false">
+
+            <!-- Previous -->
+            <ImageButton
+                android:id="@+id/widget_prev"
+                android:layout_width="38dp"
+                android:layout_height="38dp"
+                android:background="@android:color/transparent"
+                android:src="@drawable/ic_widget_prev"
+                android:scaleType="fitCenter"
+                android:padding="4dp"
+                android:contentDescription="Previous" />
+
+            <!-- Play / Pause -->
+            <ImageButton
+                android:id="@+id/widget_play_pause"
+                android:layout_width="46dp"
+                android:layout_height="46dp"
+                android:layout_marginStart="4dp"
+                android:layout_marginEnd="4dp"
+                android:background="@drawable/widget_play_button_bg"
+                android:src="@drawable/ic_widget_play"
+                android:scaleType="fitCenter"
+                android:padding="8dp"
+                android:contentDescription="Play/Pause" />
+
+            <!-- Next -->
+            <ImageButton
+                android:id="@+id/widget_next"
+                android:layout_width="38dp"
+                android:layout_height="38dp"
+                android:background="@android:color/transparent"
+                android:src="@drawable/ic_widget_next"
+                android:scaleType="fitCenter"
+                android:padding="4dp"
+                android:contentDescription="Next" />
+
+            <!-- Repeat -->
+            <ImageButton
+                android:id="@+id/widget_repeat"
+                android:layout_width="38dp"
+                android:layout_height="38dp"
+                android:layout_marginStart="4dp"
+                android:background="@android:color/transparent"
+                android:src="@drawable/ic_widget_repeat"
+                android:scaleType="fitCenter"
+                android:padding="4dp"
+                android:contentDescription="Repeat" />
+
+        </LinearLayout>
+    </LinearLayout>
+</LinearLayout>
+
