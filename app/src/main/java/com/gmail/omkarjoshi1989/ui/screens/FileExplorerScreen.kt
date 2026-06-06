@@ -398,6 +398,31 @@ fun FileExplorerScreen(
                             Icon(Icons.Filled.Share, contentDescription = "Share")
                             Text("Share", style = MaterialTheme.typography.labelSmall)
                         }
+                        // Favorites toggle
+                        val allFavorite = selectedPaths.isNotEmpty() && selectedPaths.all { it in favoritePaths }
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            modifier = Modifier
+                                .clickable {
+                                    selectedPaths.forEach { path ->
+                                        FavoritesManager.toggleFavorite(context, path)
+                                    }
+                                    favoritePaths = FavoritesManager.getFavorites(context)
+                                    selectedPaths = emptySet()
+                                }
+                                .padding(8.dp)
+                        ) {
+                            Icon(
+                                if (allFavorite) Icons.Filled.Star else Icons.Filled.StarBorder,
+                                contentDescription = if (allFavorite) "Remove from Favorites" else "Add to Favorites",
+                                tint = if (allFavorite) MaterialTheme.colorScheme.primary
+                                       else MaterialTheme.colorScheme.onPrimaryContainer
+                            )
+                            Text(
+                                if (allFavorite) "Unfavorite" else "Favorite",
+                                style = MaterialTheme.typography.labelSmall
+                            )
+                        }
                     }
                 }
             }
@@ -469,35 +494,6 @@ fun FileExplorerScreen(
                                 else emptySet()
                             }) {
                                 Icon(Icons.Filled.Apps, contentDescription = "Select all")
-                            }
-                            // More options for selection mode
-                            IconButton(onClick = { showMoreMenu = true }) {
-                                Icon(Icons.Filled.MoreVert, contentDescription = "More")
-                            }
-                            DropdownMenu(expanded = showMoreMenu, onDismissRequest = { showMoreMenu = false }) {
-                                // Open bottom-sheet for single selected file
-                                if (selectedPaths.size == 1) {
-                                    DropdownMenuItem(
-                                        text = { Text("Options for this file") },
-                                        onClick = {
-                                            selectedFile = File(selectedPaths.first())
-                                            showBottomSheet = true
-                                            showMoreMenu = false
-                                        },
-                                        leadingIcon = { Icon(Icons.Filled.MoreVert, contentDescription = null) }
-                                    )
-                                    HorizontalDivider()
-                                }
-                                DropdownMenuItem(
-                                    text = { Text("Toggle Favorites") },
-                                    onClick = {
-                                        selectedPaths.forEach { path -> FavoritesManager.toggleFavorite(context, path) }
-                                        favoritePaths = FavoritesManager.getFavorites(context)
-                                        selectedPaths = emptySet()
-                                        showMoreMenu = false
-                                    },
-                                    leadingIcon = { Icon(Icons.Filled.Star, contentDescription = null) }
-                                )
                             }
                         } else {
                             // Normal mode actions

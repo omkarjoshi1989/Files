@@ -2,6 +2,8 @@ package com.gmail.omkarjoshi1989.ui.screens
 
 import android.content.Intent
 import android.net.Uri
+import android.os.Build
+import androidx.annotation.RequiresApi
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -47,7 +49,9 @@ import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import com.gmail.omkarjoshi1989.util.SettingsManager
 import com.gmail.omkarjoshi1989.util.ThemeMode
+import com.gmail.omkarjoshi1989.BuildConfig
 
+@RequiresApi(Build.VERSION_CODES.O)
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(
@@ -106,6 +110,15 @@ fun SettingsScreen(
                 }
                 pop()
             }
+            val buildDetails = BuildConfig.VERSION_NAME
+            Text(
+                text = "Current Build: $buildDetails",
+                style = MaterialTheme.typography.bodyMedium.copy(
+                    textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                ),
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)
+            )
             ClickableText(
                 text = annotatedString,
                 modifier = Modifier
