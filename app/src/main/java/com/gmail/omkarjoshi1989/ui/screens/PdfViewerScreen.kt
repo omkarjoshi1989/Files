@@ -32,6 +32,7 @@ import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
@@ -60,6 +61,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -81,6 +83,7 @@ import androidx.core.view.WindowInsetsControllerCompat
 import com.tom_roush.pdfbox.pdmodel.PDDocument
 import com.tom_roush.pdfbox.pdmodel.encryption.InvalidPasswordException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -116,8 +119,9 @@ private class OpenPdfDocument(
 fun PdfViewerScreen(file: File, onClose: () -> Unit) {
     PdfViewerScreen(
         displayName = file.name,
-        openPfd = { ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY) },
-        onClose = onClose
+        pdfKey      = file.absolutePath,
+        openPfd     = { ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY) },
+        onClose     = onClose
     )
 }
 
@@ -128,9 +132,30 @@ fun PdfViewerScreen(file: File, onClose: () -> Unit) {
 fun PdfViewerScreen(
     displayName: String,
     openPfd: () -> ParcelFileDescriptor?,
-    onClose: () -> Unit
+    onClose: () -> Unit,
+    /**
+     * Stable unique key used to persist the scroll position across sessions.
+     * Use the absolute file path for local files, or the URI string for content:// sources.
+     * Defaults to [displayName] so existing call-sites stay source-compatible.
+     */
+    pdfKey: String = displayName
 ) {
     val context = LocalContext.current
+
+    // ── Scroll persistence ────────────────────────────────────────────────
+    // Key stored in SharedPreferences: combine length + hashCode to minimise
+    // collisions while keeping the key short and safe for any path length.
+    val scrollPrefs = remember(pdfKey) {
+        context.getSharedPreferences("pdf_scroll_positions", android.content.Context.MODE_PRIVATE)
+    }
+    val prefKey     = remember(pdfKey) { "${pdfKey.length}_${pdfKey.hashCode()}" }
+    val savedPage   = remember(pdfKey) { scrollPrefs.getInt("${prefKey}_p", 0) }
+    val savedOffset = remember(pdfKey) { scrollPrefs.getInt("${prefKey}_o", 0) }
+
+    val listState = rememberLazyListState(
+        initialFirstVisibleItemIndex        = savedPage,
+        initialFirstVisibleItemScrollOffset = savedOffset
+    )
 
     // ── Core state ───────────────────────────────────────────────────────
     var loadTrigger       by remember { mutableIntStateOf(0) }
@@ -164,6 +189,11 @@ fun PdfViewerScreen(
 
     DisposableEffect(Unit) {
         onDispose {
+            // Persist last scroll position immediately on close / back-press.
+            scrollPrefs.edit()
+                .putInt("${prefKey}_p", listState.firstVisibleItemIndex)
+                .putInt("${prefKey}_o", listState.firstVisibleItemScrollOffset)
+                .apply()
             activity?.window?.let { window ->
                 WindowCompat.getInsetsController(window, view)
                     .show(WindowInsetsCompat.Type.systemBars())
@@ -189,6 +219,8 @@ fun PdfViewerScreen(
                 try {
                     val native = NativePdfRenderer(pfd)
                     val holder = OpenPdfDocument(pfd, native, native.pageCount)
+                    // Persist total page count so the file list can show % completed cheaply.
+                    scrollPrefs.edit().putInt("${prefKey}_total", native.pageCount).apply()
                     withContext(Dispatchers.Main) {
                         openDoc?.close()
                         openDoc = holder
@@ -244,6 +276,8 @@ fun PdfViewerScreen(
                     )
                     val native = NativePdfRenderer(tempPfd)
                     val holder = OpenPdfDocument(tempPfd, native, native.pageCount, tempFile)
+                    // Persist total page count so the file list can show % completed cheaply.
+                    scrollPrefs.edit().putInt("${prefKey}_total", native.pageCount).apply()
 
                     withContext(Dispatchers.Main) {
                         openDoc?.close()
@@ -264,6 +298,23 @@ fun PdfViewerScreen(
                 }
             }
         }
+    }
+
+    // ── Save scroll position whenever it changes ─────────────────────────
+    // Gated by isLoaded so we never overwrite a valid saved position with 0
+    // while the document is still being rendered on first open.
+    LaunchedEffect(listState, prefKey, isLoaded) {
+        if (!isLoaded) return@LaunchedEffect
+        snapshotFlow {
+            listState.firstVisibleItemIndex to listState.firstVisibleItemScrollOffset
+        }
+            .distinctUntilChanged()
+            .collect { (page, offset) ->
+                scrollPrefs.edit()
+                    .putInt("${prefKey}_p", page)
+                    .putInt("${prefKey}_o", offset)
+                    .apply()
+            }
     }
 
     // ── Password dialog ──────────────────────────────────────────────────
@@ -319,6 +370,7 @@ fun PdfViewerScreen(
 
             isLoaded && pageCount > 0 -> {
                 LazyColumn(
+                    state = listState,
                     modifier = Modifier.fillMaxSize(),
                     contentPadding = PaddingValues(
                         top    = topContentPadding,

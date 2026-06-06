@@ -1242,6 +1242,44 @@ fun FileListItem(
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
+
+                    // ── PDF reading progress % (text only, no bar) ────────────
+                    if (!file.isDirectory && file.extension.lowercase() == "pdf") {
+                        val pdfCtx = LocalContext.current
+                        var pdfResumeTick by remember(file.absolutePath) { mutableStateOf(0) }
+                        val pdfLifecycleOwner = LocalLifecycleOwner.current
+                        DisposableEffect(pdfLifecycleOwner) {
+                            val observer = LifecycleEventObserver { _, event ->
+                                if (event == Lifecycle.Event.ON_RESUME) pdfResumeTick++
+                            }
+                            pdfLifecycleOwner.lifecycle.addObserver(observer)
+                            onDispose { pdfLifecycleOwner.lifecycle.removeObserver(observer) }
+                        }
+                        val pdfPercent by produceState<Int?>(
+                            initialValue = null,
+                            key1 = file.absolutePath,
+                            key2 = pdfResumeTick
+                        ) {
+                            value = withContext(Dispatchers.IO) {
+                                val prefs = pdfCtx.getSharedPreferences(
+                                    "pdf_scroll_positions",
+                                    android.content.Context.MODE_PRIVATE
+                                )
+                                val prefKey = "${file.absolutePath.length}_${file.absolutePath.hashCode()}"
+                                val page  = prefs.getInt("${prefKey}_p", -1)
+                                val total = prefs.getInt("${prefKey}_total", 0)
+                                if (total <= 0 || page < 0) null
+                                else ((page + 1) * 100 / total).coerceIn(1, 99)
+                            }
+                        }
+                        pdfPercent?.let { pct ->
+                            Text(
+                                text  = "$pct%",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                    }
                 }
             }
 

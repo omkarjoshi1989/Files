@@ -48,14 +48,21 @@ class PdfViewerActivity : ComponentActivity() {
         if (intent?.action == Intent.ACTION_VIEW) {
             val uri: Uri = intent.data ?: run { finish(); return }
 
-            val (displayName, openPfd) = when (uri.scheme?.lowercase()) {
+            var displayName: String
+            var pdfKey: String
+            var openPfd: () -> ParcelFileDescriptor?
+
+            when (uri.scheme?.lowercase()) {
                 "file" -> {
                     val file = File(uri.path ?: run { finish(); return })
-                    Pair(file.name) { ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY) }
+                    displayName = file.name
+                    pdfKey      = file.absolutePath
+                    openPfd     = { ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY) }
                 }
                 "content" -> {
-                    val name = resolveDisplayName(uri)
-                    Pair(name) { contentResolver.openFileDescriptor(uri, "r") }
+                    displayName = resolveDisplayName(uri)
+                    pdfKey      = uri.toString()
+                    openPfd     = { contentResolver.openFileDescriptor(uri, "r") }
                 }
                 else -> { finish(); return }
             }
@@ -64,8 +71,9 @@ class PdfViewerActivity : ComponentActivity() {
                 FilesTheme {
                     PdfViewerScreen(
                         displayName = displayName,
-                        openPfd = openPfd,
-                        onClose = { finish() }
+                        pdfKey      = pdfKey,
+                        openPfd     = openPfd,
+                        onClose     = { finish() }
                     )
                 }
             }
