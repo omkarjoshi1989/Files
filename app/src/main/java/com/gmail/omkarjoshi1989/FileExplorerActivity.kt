@@ -222,6 +222,10 @@ class FileExplorerActivity : ComponentActivity() {
                             BackHandler { currentScreen = Screen.FILE_EXPLORER }
                             FavoritesScreen(
                                 onOpenFile = { file -> openFile(file) },
+                                onOpenFolder = { folder ->
+                                    fileViewModel.navigateTo(folder.absolutePath)
+                                    currentScreen = Screen.FILE_EXPLORER
+                                },
                                 onNavigateBack = { currentScreen = Screen.FILE_EXPLORER }
                             )
                         }

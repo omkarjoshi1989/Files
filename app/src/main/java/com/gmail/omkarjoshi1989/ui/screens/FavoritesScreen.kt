@@ -64,6 +64,7 @@ import java.util.Date
 @Composable
 fun FavoritesScreen(
     onOpenFile: (File) -> Unit,
+    onOpenFolder: (File) -> Unit = {},
     onNavigateBack: () -> Unit
 ) {
     val context = LocalContext.current
@@ -82,7 +83,7 @@ fun FavoritesScreen(
     val favoriteFiles = remember(favoritePaths, showHidden) {
         favoritePaths
             .map { File(it) }
-            .filter { it.exists() && it.isFile }
+            .filter { it.exists() }
             .filter { showHidden || !it.isHidden }
             .sortedBy { it.name.lowercase() }
     }
@@ -151,7 +152,9 @@ fun FavoritesScreen(
                 items(favoriteFiles, key = { it.absolutePath }) { file ->
                     FavoriteFileItem(
                         file = file,
-                        onClick = { onOpenFile(file) },
+                        onClick = {
+                            if (file.isDirectory) onOpenFolder(file) else onOpenFile(file)
+                        },
                         onLongClick = {
                             selectedFile = file
                             showBottomSheet = true
@@ -337,7 +340,12 @@ private fun FavoriteFileItem(
                 Spacer(modifier = Modifier.height(2.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     Text(
-                        text = FileUtils.formatFileSize(file.length()),
+                        text = if (file.isDirectory) {
+                            val count = file.listFiles()?.size ?: 0
+                            "$count item${if (count == 1) "" else "s"}"
+                        } else {
+                            FileUtils.formatFileSize(file.length())
+                        },
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )

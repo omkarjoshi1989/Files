@@ -50,6 +50,8 @@ import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Sort
 import androidx.compose.material.icons.filled.Storage
 import androidx.compose.material.icons.filled.VideoLibrary
+import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material.icons.filled.Archive
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
@@ -516,6 +518,16 @@ fun FileExplorerScreen(
                                     Icons.Filled.PlayCircle,
                                     contentDescription = "Music",
                                     tint = MaterialTheme.colorScheme.primary
+                                )
+                            }
+                            // Toggle show/hide hidden files
+                            IconButton(onClick = {
+                                val newValue = !uiState.showHiddenFiles
+                                com.gmail.omkarjoshi1989.util.SettingsManager.setShowHiddenFiles(context, newValue)
+                            }) {
+                                Icon(
+                                    if (uiState.showHiddenFiles) Icons.Filled.Visibility else Icons.Filled.VisibilityOff,
+                                    contentDescription = if (uiState.showHiddenFiles) "Hide hidden files" else "Show hidden files"
                                 )
                             }
                             IconButton(onClick = { viewModel.toggleSearch() }) {
