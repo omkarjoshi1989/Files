@@ -12,6 +12,7 @@ enum class ThemeMode(val label: String) {
 object SettingsManager {
 
     private const val PREFS_NAME = "app_settings"
+    private const val PREFS_FOLDER_SORT = "folder_sort_settings"
     private const val KEY_MASTER_PASSWORD_ENABLED = "master_password_enabled"
     private const val KEY_SHOW_HIDDEN_FILES = "show_hidden_files"
     private const val KEY_THEME_MODE = "theme_mode"
@@ -19,6 +20,10 @@ object SettingsManager {
 
     private fun getPrefs(context: Context): SharedPreferences {
         return context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+    }
+
+    private fun getFolderSortPrefs(context: Context): SharedPreferences {
+        return context.getSharedPreferences(PREFS_FOLDER_SORT, Context.MODE_PRIVATE)
     }
 
     fun isMasterPasswordEnabled(context: Context): Boolean {
@@ -52,5 +57,35 @@ object SettingsManager {
 
     fun setBackgroundPlaybackEnabled(context: Context, enabled: Boolean) {
         getPrefs(context).edit().putBoolean(KEY_BACKGROUND_PLAYBACK, enabled).apply()
+    }
+
+    /**
+     * Saves the sorting preference for a specific folder path.
+     * @param folderPath Absolute path of the folder
+     * @param sortOption Sorting option (e.g., "NAME", "DATE", "SIZE", "TYPE")
+     * @param ascending Whether sorting is ascending (true) or descending (false)
+     */
+    fun saveFolderSort(context: Context, folderPath: String, sortOption: String, ascending: Boolean) {
+        val prefs = getFolderSortPrefs(context)
+        prefs.edit()
+            .putString("${folderPath}_option", sortOption)
+            .putBoolean("${folderPath}_ascending", ascending)
+            .apply()
+    }
+
+    /**
+     * Retrieves the sorting preference for a specific folder path.
+     * @param folderPath Absolute path of the folder
+     * @return Pair of (sortOption, ascending), or null if no preference is saved (defaults to NAME/ascending)
+     */
+    fun getFolderSort(context: Context, folderPath: String): Pair<String, Boolean>? {
+        val prefs = getFolderSortPrefs(context)
+        val option = prefs.getString("${folderPath}_option", null)
+        return if (option != null) {
+            val ascending = prefs.getBoolean("${folderPath}_ascending", true)
+            Pair(option, ascending)
+        } else {
+            null // No preference saved, will use default (NAME, ascending)
+        }
     }
 }

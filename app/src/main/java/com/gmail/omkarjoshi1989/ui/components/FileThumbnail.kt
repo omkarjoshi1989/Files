@@ -39,10 +39,11 @@ fun FileThumbnail(
     size: Dp = 40.dp,
     modifier: Modifier = Modifier
 ) {
-    val extension = file.extension.lowercase()
+    val extension = remember(file) { file.extension.lowercase() }
+    val isDirectory = remember(file) { file.isDirectory }
 
     when {
-        file.isDirectory -> {
+        isDirectory -> {
             Icon(
                 imageVector = Icons.Filled.Folder,
                 contentDescription = "Folder",
@@ -53,26 +54,29 @@ fun FileThumbnail(
 
         extension in imageExtensions -> {
             val placeholder = remember { ColorPainter(Color(0xFFBDBDBD)) }
-            AsyncImage(
-                model = ImageRequest.Builder(LocalContext.current)
+            val context = LocalContext.current
+            
+            // Optimized image request with aggressive caching for bulk operations
+            val imageRequest = remember(file.absolutePath, file.lastModified()) {
+                ImageRequest.Builder(context)
                     .data(file)
-                    // Keep crossfade off per-request; the singleton ImageLoader already
-                    // has crossfade enabled globally, avoiding a redundant animator.
-                    // 40 px is plenty for a list thumbnail; smaller = faster decode.
-                    .size(40)
-                    // INEXACT lets Coil reuse a cached bitmap that is close in size
-                    // instead of re-decoding just because the pixel dimensions differ
-                    // by a few pixels. Huge cache-hit improvement for mixed-DPI screens.
+                    // Thumbnail size optimized for list items (40dp ≈ 120px on most devices)
+                    .size(120)
+                    // INEXACT precision allows cache reuse across similar sizes
                     .precision(Precision.INEXACT)
-                    // allowHardware(false) is already set on the singleton ImageLoader
-                    // but repeated here as a belt-and-suspenders guard: thumbnails must
-                    // NEVER go through the DMA-BUF / mtk_mm hardware pipeline.
+                    // Hardware rendering disabled for thumbnails to avoid GPU memory pressure
                     .allowHardware(false)
-                    .memoryCacheKey("img:${file.absolutePath}:${file.lastModified()}")
-                    .diskCacheKey("img:${file.absolutePath}:${file.lastModified()}")
+                    // Aggressive disk caching for fast scrolling
                     .diskCachePolicy(CachePolicy.ENABLED)
                     .memoryCachePolicy(CachePolicy.ENABLED)
-                    .build(),
+                    // Unique cache keys including file modification time
+                    .memoryCacheKey("img:${file.absolutePath}:${file.lastModified()}")
+                    .diskCacheKey("img:${file.absolutePath}:${file.lastModified()}")
+                    .build()
+            }
+            
+            AsyncImage(
+                model = imageRequest,
                 placeholder = placeholder,
                 error = placeholder,
                 contentDescription = file.name,
@@ -85,11 +89,15 @@ fun FileThumbnail(
 
         extension in videoExtensions -> {
             val placeholder = remember { ColorPainter(Color(0xFF757575)) }
-            AsyncImage(
-                model = ImageRequest.Builder(LocalContext.current)
+            val context = LocalContext.current
+            
+            // Optimized video frame request with caching
+            val videoRequest = remember(file.absolutePath, file.lastModified()) {
+                ImageRequest.Builder(context)
                     .data(file)
                     .decoderFactory(VideoFrameDecoder.Factory())
-                    .size(40)
+                    // Video frame extraction at 120px for efficiency
+                    .size(120)
                     .precision(Precision.INEXACT)
                     .allowHardware(false)
                     .parameters(
@@ -97,11 +105,16 @@ fun FileThumbnail(
                             .set(VideoFrameDecoder.VIDEO_FRAME_MICROS_KEY, 0L)
                             .build()
                     )
-                    .memoryCacheKey("vid:${file.absolutePath}:${file.lastModified()}")
-                    .diskCacheKey("vid:${file.absolutePath}:${file.lastModified()}")
+                    // Aggressive caching for video frames (expensive to extract)
                     .diskCachePolicy(CachePolicy.ENABLED)
                     .memoryCachePolicy(CachePolicy.ENABLED)
-                    .build(),
+                    .memoryCacheKey("vid:${file.absolutePath}:${file.lastModified()}")
+                    .diskCacheKey("vid:${file.absolutePath}:${file.lastModified()}")
+                    .build()
+            }
+            
+            AsyncImage(
+                model = videoRequest,
                 placeholder = placeholder,
                 error = placeholder,
                 contentDescription = file.name,
@@ -114,8 +127,11 @@ fun FileThumbnail(
 
         else -> {
             // Show extension label in CAPITAL letters with a colored background
-            val displayExt = if (extension.isNotEmpty()) extension.uppercase() else "FILE"
-            val bgColor = getExtensionColor(extension)
+            val displayExt = remember(extension) {
+                if (extension.isNotEmpty()) extension.uppercase() else "FILE"
+            }
+            val bgColor = remember(extension) { getExtensionColor(extension) }
+            
             Box(
                 modifier = modifier
                     .size(size)

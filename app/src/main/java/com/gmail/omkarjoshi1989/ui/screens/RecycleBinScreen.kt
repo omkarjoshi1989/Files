@@ -257,11 +257,6 @@ private fun RecycleBinItemRow(
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
-                Text(
-                    "Deleted: ${DateFormat.format("MMM dd, yyyy HH:mm", Date(item.deletedAt))}",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
             }
             // Restore button
             IconButton(onClick = onRestore) {

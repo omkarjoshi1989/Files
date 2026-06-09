@@ -1,8 +1,10 @@
 package com.gmail.omkarjoshi1989.ui.screens
 
+import android.content.Context
 import android.content.res.Configuration
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.media.AudioManager
 import android.media.MediaMetadataRetriever
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
@@ -11,6 +13,7 @@ import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -20,6 +23,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBarsPadding
@@ -38,6 +42,7 @@ import androidx.compose.material.icons.filled.Repeat
 import androidx.compose.material.icons.filled.RepeatOne
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SkipPrevious
+import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -55,12 +60,14 @@ import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
@@ -88,7 +95,9 @@ import com.gmail.omkarjoshi1989.util.FileUtils
 import com.gmail.omkarjoshi1989.util.MusicResumeManager
 import com.google.common.util.concurrent.MoreExecutors
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 
@@ -665,6 +674,7 @@ private fun MusicAudioPage(
     onPlayPause: () -> Unit,
     onTap: () -> Unit
 ) {
+    val context = LocalContext.current
     val configuration = LocalConfiguration.current
     val isLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
 
@@ -685,6 +695,34 @@ private fun MusicAudioPage(
         else currentPosition.toFloat() / duration.toFloat()
     } else 0f
 
+    // ── Volume overlay state (hoisted here so it is an overlay, not in flow) ──
+    val audioManager = remember { context.getSystemService(Context.AUDIO_SERVICE) as AudioManager }
+    var showVolumeSlider by remember { mutableStateOf(false) }
+    var systemVolume by remember {
+        mutableIntStateOf(audioManager.getStreamVolume(AudioManager.STREAM_MUSIC))
+    }
+    val maxVolume = remember { audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC) }
+
+    // Explicit Job-based auto-hide: immune to Compose snapshot timing issues.
+    // Every call to startVolumeAutoHide() cancels the previous countdown and
+    // starts a fresh 3-second timer.  No LaunchedEffect key-change race involved.
+    val volumeScope = rememberCoroutineScope()
+    var volumeAutoHideJob by remember { mutableStateOf<Job?>(null) }
+
+    fun startVolumeAutoHide() {
+        volumeAutoHideJob?.cancel()
+        volumeAutoHideJob = volumeScope.launch {
+            delay(3_000)
+            showVolumeSlider = false
+            volumeAutoHideJob = null
+        }
+    }
+
+    fun cancelVolumeAutoHide() {
+        volumeAutoHideJob?.cancel()
+        volumeAutoHideJob = null
+    }
+
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -692,7 +730,9 @@ private fun MusicAudioPage(
             .clickable(
                 indication = null,
                 interactionSource = remember { MutableInteractionSource() }
-            ) { onTap() },
+            ) {
+                if (showVolumeSlider) { showVolumeSlider = false; cancelVolumeAutoHide() } else onTap()
+            },
         contentAlignment = Alignment.Center
     ) {
         if (isLandscape) {
@@ -797,7 +837,30 @@ private fun MusicAudioPage(
                         repeatMode = repeatMode,
                         onToggleRepeat = onToggleRepeat,
                         onPlayPause = onPlayPause,
-                        controller = controller
+                        controller = controller,
+                        showVolumeSlider = showVolumeSlider,
+                        onToggleVolumeSlider = {
+                            if (!showVolumeSlider) {
+                                systemVolume = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
+                                showVolumeSlider = true
+                                startVolumeAutoHide()
+                            } else {
+                                showVolumeSlider = false
+                                cancelVolumeAutoHide()
+                            }
+                        },
+                        systemVolume = systemVolume,
+                        maxVolume = maxVolume,
+                        onVolumeChange = { newVol ->
+                            systemVolume = newVol
+                            audioManager.setStreamVolume(
+                                AudioManager.STREAM_MUSIC,
+                                systemVolume,
+                                0
+                            )
+                            // Reset the 3-second auto-hide timer on every drag event
+                            startVolumeAutoHide()
+                        }
                     )
                 }
             }
@@ -889,7 +952,29 @@ private fun MusicAudioPage(
                     repeatMode = repeatMode,
                     onToggleRepeat = onToggleRepeat,
                     onPlayPause = onPlayPause,
-                    controller = controller
+                    controller = controller,
+                    showVolumeSlider = showVolumeSlider,
+                    onToggleVolumeSlider = {
+                        if (!showVolumeSlider) {
+                            systemVolume = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
+                            showVolumeSlider = true
+                            startVolumeAutoHide()
+                        } else {
+                            showVolumeSlider = false
+                            cancelVolumeAutoHide()
+                        }
+                    },
+                    systemVolume = systemVolume,
+                    maxVolume = maxVolume,
+                    onVolumeChange = { newVol ->
+                        systemVolume = newVol
+                        audioManager.setStreamVolume(
+                            AudioManager.STREAM_MUSIC,
+                            newVol,
+                            0
+                        )
+                        startVolumeAutoHide()
+                    }
                 )
             }
         }
@@ -946,96 +1031,171 @@ private fun MusicControlsRow(
     repeatMode: Int,
     onToggleRepeat: () -> Unit,
     onPlayPause: () -> Unit,
-    controller: MediaController?
+    controller: MediaController?,
+    showVolumeSlider: Boolean,
+    onToggleVolumeSlider: () -> Unit,
+    systemVolume: Int,
+    maxVolume: Int,
+    onVolumeChange: (Int) -> Unit
 ) {
     val repeatActive = repeatMode == Player.REPEAT_MODE_ONE
 
-    Column(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
-        // ── Prev · Play/Pause · Next ────────────────────────────────────
-        Row(
-            horizontalArrangement = Arrangement.spacedBy(16.dp, Alignment.CenterHorizontally),
-            verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier.fillMaxWidth()
+    // Controls column height: Prev/Play/Next (76dp) + Spacer (16dp) + Repeat/Volume (52dp) = 144dp
+    // The volume slider Box uses offset(y) to appear 8dp below the column without shifting layout.
+    Box(modifier = Modifier.fillMaxWidth()) {
+        Column(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            // Previous track
-            IconButton(
-                onClick = {
-                    controller?.let { mc ->
-                        try { mc.seekToPrevious() } catch (_: Exception) {}
-                    }
-                },
-                modifier = Modifier
-                    .size(64.dp)
-                    .clip(CircleShape)
-                    .background(Color.White.copy(alpha = 0.12f))
+            // ── Prev · Play/Pause · Next ────────────────────────────────────
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(16.dp, Alignment.CenterHorizontally),
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.fillMaxWidth()
             ) {
-                Icon(
-                    imageVector = Icons.Filled.SkipPrevious,
-                    contentDescription = "Previous",
-                    modifier = Modifier.size(36.dp),
-                    tint = Color.White
-                )
+                // Previous track
+                IconButton(
+                    onClick = {
+                        controller?.let { mc ->
+                            try { mc.seekToPrevious() } catch (_: Exception) {}
+                        }
+                    },
+                    modifier = Modifier
+                        .size(64.dp)
+                        .clip(CircleShape)
+                        .background(Color.White.copy(alpha = 0.12f))
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.SkipPrevious,
+                        contentDescription = "Previous",
+                        modifier = Modifier.size(36.dp),
+                        tint = Color.White
+                    )
+                }
+
+                // Play / Pause (primary, larger)
+                IconButton(
+                    onClick = { onPlayPause() },
+                    modifier = Modifier
+                        .size(76.dp)
+                        .clip(CircleShape)
+                        .background(Color(0xFFFF9800))
+                ) {
+                    Icon(
+                        imageVector = if (isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
+                        contentDescription = if (isPlaying) "Pause" else "Play",
+                        modifier = Modifier.size(42.dp),
+                        tint = Color.White
+                    )
+                }
+
+                // Next track
+                IconButton(
+                    onClick = {
+                        controller?.let { mc ->
+                            try { mc.seekToNext() } catch (_: Exception) {}
+                        }
+                    },
+                    modifier = Modifier
+                        .size(64.dp)
+                        .clip(CircleShape)
+                        .background(Color.White.copy(alpha = 0.12f))
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.SkipNext,
+                        contentDescription = "Next",
+                        modifier = Modifier.size(36.dp),
+                        tint = Color.White
+                    )
+                }
             }
 
-            // Play / Pause (primary, larger)
-            IconButton(
-                onClick = { onPlayPause() },
-                modifier = Modifier
-                    .size(76.dp)
-                    .clip(CircleShape)
-                    .background(Color(0xFFFF9800))
-            ) {
-                Icon(
-                    imageVector = if (isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
-                    contentDescription = if (isPlaying) "Pause" else "Play",
-                    modifier = Modifier.size(42.dp),
-                    tint = Color.White
-                )
-            }
+            Spacer(modifier = Modifier.height(16.dp))
 
-            // Next track
-            IconButton(
-                onClick = {
-                    controller?.let { mc ->
-                        try { mc.seekToNext() } catch (_: Exception) {}
-                    }
-                },
-                modifier = Modifier
-                    .size(64.dp)
-                    .clip(CircleShape)
-                    .background(Color.White.copy(alpha = 0.12f))
+            // ── Repeat and Volume toggles (centered below play/pause) ────────
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(16.dp, Alignment.CenterHorizontally),
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.fillMaxWidth()
             ) {
-                Icon(
-                    imageVector = Icons.Filled.SkipNext,
-                    contentDescription = "Next",
-                    modifier = Modifier.size(36.dp),
-                    tint = Color.White
-                )
+                // Repeat toggle
+                IconButton(
+                    onClick = { onToggleRepeat() },
+                    modifier = Modifier
+                        .size(52.dp)
+                        .clip(CircleShape)
+                        .background(
+                            if (repeatActive) Color(0xFFFF9800).copy(alpha = 0.25f)
+                            else Color.White.copy(alpha = 0.12f)
+                        )
+                ) {
+                    Icon(
+                        imageVector = if (repeatActive) Icons.Filled.RepeatOne else Icons.Filled.Repeat,
+                        contentDescription = "Repeat",
+                        modifier = Modifier.size(28.dp),
+                        tint = if (repeatActive) Color(0xFFFF9800) else Color.White
+                    )
+                }
+
+                // Volume toggle button
+                IconButton(
+                    onClick = { onToggleVolumeSlider() },
+                    modifier = Modifier
+                        .size(52.dp)
+                        .clip(CircleShape)
+                        .background(
+                            if (showVolumeSlider) Color(0xFFFF9800).copy(alpha = 0.25f)
+                            else Color.White.copy(alpha = 0.12f)
+                        )
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.VolumeUp,
+                        contentDescription = "Volume",
+                        modifier = Modifier.size(28.dp),
+                        tint = if (showVolumeSlider) Color(0xFFFF9800) else Color.White
+                    )
+                }
             }
         }
 
-        Spacer(modifier = Modifier.height(16.dp))
-
-        // ── Repeat toggle (centered below play/pause) ────────────────────
-        IconButton(
-            onClick = { onToggleRepeat() },
+        // ── Volume slider overlay — positioned just below the controls column ──
+        // offset(y = 152.dp) moves it past the column height (144dp) + 8dp gap.
+        // Box does NOT clip children, so it renders below without affecting layout.
+        AnimatedVisibility(
+            visible = showVolumeSlider,
             modifier = Modifier
-                .size(52.dp)
-                .clip(CircleShape)
-                .background(
-                    if (repeatActive) Color(0xFFFF9800).copy(alpha = 0.25f)
-                    else Color.White.copy(alpha = 0.12f)
-                )
+                .align(Alignment.TopCenter)
+                .offset(y = 152.dp),
+            enter = fadeIn() + slideInVertically(initialOffsetY = { it }),
+            exit = fadeOut() + slideOutVertically(targetOffsetY = { it })
         ) {
-            Icon(
-                imageVector = if (repeatActive) Icons.Filled.RepeatOne else Icons.Filled.Repeat,
-                contentDescription = "Repeat",
-                modifier = Modifier.size(28.dp),
-                tint = if (repeatActive) Color(0xFFFF9800) else Color.White
-            )
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(20.dp))
+                    .background(Color(0xFF1A1A1A).copy(alpha = 0.95f))
+                    .padding(horizontal = 20.dp, vertical = 14.dp)
+                    .pointerInput(Unit) { detectTapGestures { /* consume taps */ } }
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.VolumeUp,
+                        contentDescription = null,
+                        tint = Color(0xFFFF9800),
+                        modifier = Modifier.size(22.dp)
+                    )
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Slider(
+                        value = systemVolume.toFloat(),
+                        onValueChange = { newValue -> onVolumeChange(newValue.toInt()) },
+                        valueRange = 0f..maxVolume.toFloat(),
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+            }
         }
     }
 }
@@ -1063,4 +1223,3 @@ private fun musicLoadAlbumArt(file: File): Bitmap? {
         }
     }
 }
-

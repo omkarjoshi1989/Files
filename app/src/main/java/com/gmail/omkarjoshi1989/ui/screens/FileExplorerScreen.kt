@@ -192,16 +192,22 @@ fun FileExplorerScreen(
     // recurse through thousands of files on large devices like DCIM with 1000+ items).
     // Results are cached inside CollectionType so subsequent calls are instant.
     var displayFiles by remember { mutableStateOf<List<File>>(emptyList()) }
+    // Tracks whether the async collection-filter pass is still running so we can
+    // show a loading indicator instead of a premature "no files found" message.
+    var isFilteringFiles by remember { mutableStateOf(collectionFilter != null) }
     LaunchedEffect(uiState.files, collectionFilter) {
-        displayFiles = if (collectionFilter != null) {
-            withContext(Dispatchers.IO) {
+        if (collectionFilter != null) {
+            isFilteringFiles = true
+            displayFiles = withContext(Dispatchers.IO) {
                 uiState.files.filter { file ->
                     if (file.isDirectory) collectionFilter.folderContainsMatchingFiles(file)
                     else collectionFilter.matchesFile(file)
                 }
             }
+            isFilteringFiles = false
         } else {
-            uiState.files
+            isFilteringFiles = false
+            displayFiles = uiState.files
         }
     }
 
@@ -1108,7 +1114,11 @@ fun FileListItem(
     onClick: () -> Unit,
     onLongClick: () -> Unit
 ) {
-    val isHidden = file.name.startsWith(".")
+    // Pre-compute stable values to avoid recomposition
+    val isHidden = remember(file) { file.name.startsWith(".") }
+    val isDirectory = remember(file) { file.isDirectory }
+    val fileName = remember(file) { file.name }
+    
     val selectionColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)
     Column(
         modifier = Modifier
@@ -1128,15 +1138,15 @@ fun FileListItem(
 
             Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    text = file.name,
+                    text = fileName,
                     style = MaterialTheme.typography.bodyLarge,
-                    fontWeight = if (file.isDirectory) FontWeight.Medium else FontWeight.Normal,
+                    fontWeight = if (isDirectory) FontWeight.Medium else FontWeight.Normal,
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis
                 )
 
                 // ── Video playback progress bar (only for video files) ────────
-                if (!file.isDirectory && FileUtils.isVideoFile(file)) {
+                if (!isDirectory && FileUtils.isVideoFile(file)) {
                     val videoCtx = LocalContext.current
 
                     // Increment on every ON_RESUME so produceState re-reads the
@@ -1245,11 +1255,6 @@ fun FileListItem(
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
-                    Text(
-                        text = DateFormat.format("MMM dd, yyyy HH:mm", Date(file.lastModified())).toString(),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
 
                     // ── PDF reading progress % (text only, no bar) ────────────
                     if (!file.isDirectory && file.extension.lowercase() == "pdf") {

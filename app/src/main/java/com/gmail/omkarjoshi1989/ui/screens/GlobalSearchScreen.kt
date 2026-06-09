@@ -257,11 +257,6 @@ private fun GlobalSearchResultItem(
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
-                    Text(
-                        text = DateFormat.format("MMM dd, yyyy", Date(file.lastModified())).toString(),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
                 }
             }
         }

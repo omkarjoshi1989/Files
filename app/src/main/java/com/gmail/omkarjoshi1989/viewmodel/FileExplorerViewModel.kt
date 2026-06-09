@@ -15,6 +15,8 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.gmail.omkarjoshi1989.util.RecycleBinManager
 import com.gmail.omkarjoshi1989.util.SettingsManager
+import com.gmail.omkarjoshi1989.util.ChunkedFileLoader
+import com.gmail.omkarjoshi1989.util.ChunkConfig
 import com.gmail.omkarjoshi1989.model.clearFolderMatchCache
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -74,6 +76,7 @@ data class FileExplorerUiState(
     val showHiddenFiles: Boolean = false,
     val clipboard: ClipboardData? = null,
     val isLoading: Boolean = false,
+    val isLoadingMore: Boolean = false,
     val isRefreshing: Boolean = false,
     val errorMessage: String? = null,
     val operationMessage: String? = null,
@@ -87,6 +90,15 @@ data class FileExplorerUiState(
 
 class FileExplorerViewModel(application: Application) : AndroidViewModel(application) {
 
+    // ── Chunked Loading Configuration ────────────────────────────────────────
+    /** Configuration for chunked file loading to handle large directories efficiently */
+    private val chunkConfig = ChunkConfig(
+        chunkSize = 150,              // Files displayed per subsequent chunk
+        initialBatchSize = 200,       // Files shown in the very first paint
+        maxConcurrentChunks = 2,
+        chunkDelayMs = 50             // ms between subsequent chunk renders
+    )
+
     private val _currentPath = MutableStateFlow(Environment.getExternalStorageDirectory().absolutePath)
     private val _showHiddenFiles = MutableStateFlow(SettingsManager.isShowHiddenFiles(application))
 
@@ -98,6 +110,7 @@ class FileExplorerViewModel(application: Application) : AndroidViewModel(applica
     private val _clipboard get() = ClipboardRepository.clipboard
 
     private val _isLoading = MutableStateFlow(false)
+    private val _isLoadingMore = MutableStateFlow(false)
     private val _isRefreshing = MutableStateFlow(false)
     private val _errorMessage = MutableStateFlow<String?>(null)
     private val _operationMessage = MutableStateFlow<String?>(null)
@@ -169,8 +182,16 @@ class FileExplorerViewModel(application: Application) : AndroidViewModel(applica
         application.getSharedPreferences("app_settings", Context.MODE_PRIVATE)
             .registerOnSharedPreferenceChangeListener(prefListener)
         startWatching(_currentPath.value)
+        
+        // Load initial sort preference for the starting folder
+        loadSortPreferenceForCurrentPath()
+        
         viewModelScope.launch {
-            _currentPath.collect { path -> startWatching(path) }
+            _currentPath.collect { path -> 
+                startWatching(path)
+                // Load sort preference when path changes
+                loadSortPreferenceForPath(path)
+            }
         }
 
         // ── Async file loading ────────────────────────────────────────────────
@@ -202,11 +223,14 @@ class FileExplorerViewModel(application: Application) : AndroidViewModel(applica
             NavState(path, hidden, sq, searchActive, sort)
         },
         _clipboard,
-        combine(_isLoading, _isRefreshing, _selectionState) { l, r, sel -> Triple(l, r, sel) },
+        combine(_isLoading, _isLoadingMore, _isRefreshing, _selectionState) { l, lm, r, sel -> 
+            Triple(Triple(l, lm, r), sel, Unit) 
+        },
         combine(_errorMessage, _operationMessage) { err, op -> err to op },
         _files
     ) { navState, clipboard, loadingSel, errOp, files ->
-        val (loading, refreshing, selState) = loadingSel
+        val (loadingStates, selState, _) = loadingSel
+        val (loading, loadingMore, refreshing) = loadingStates
         val (error, opMsg) = errOp
         FileExplorerUiState(
             currentPath = navState.path,
@@ -214,6 +238,7 @@ class FileExplorerViewModel(application: Application) : AndroidViewModel(applica
             showHiddenFiles = navState.showHidden,
             clipboard = clipboard,
             isLoading = loading,
+            isLoadingMore = loadingMore,
             isRefreshing = refreshing,
             errorMessage = error,
             operationMessage = opMsg,
@@ -227,72 +252,116 @@ class FileExplorerViewModel(application: Application) : AndroidViewModel(applica
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), FileExplorerUiState())
 
     /**
-     * Stale-while-revalidate loading strategy:
+     * Improved loading strategy — eliminates item reordering during progressive display:
      *
-     * 1. If a cached raw listing exists and no search is active → show cached result
-     *    immediately on Dispatchers.Default (CPU sort only, no disk IO, no spinner).
-     * 2. Always reload from disk on Dispatchers.IO in the background.
-     * 3. When the fresh result arrives, update the cache and the display.
+     * Fast path (cache hit):
+     *   Display the cached raw list immediately after applying sort/filter on Dispatchers.Default.
+     *   No disk I/O, no spinner — instant. FileObserver invalidates the cache on any FS change.
      *
-     * Result: the spinner only appears on the FIRST visit to a folder.
-     * Back-navigation and revisits are instant.
+     * Slow path (cache miss):
+     *   1. Read ALL file metadata from disk in ONE listFiles() call (no double-read).
+     *   2. Cache the raw (unsorted) list immediately.
+     *   3. Sort the ENTIRE list once on Dispatchers.Default.
+     *   4. Display the first [initialBatchSize] files immediately (spinner disappears).
+     *   5. Append subsequent sorted chunks with small delays — because files are
+     *      already in correct order, new chunks APPEND to the bottom and never
+     *      cause already-visible items to jump/reorder.
      */
     private suspend fun loadFilesAsync(navState: NavState) {
         val key = rawCacheKey(navState.path, navState.showHidden)
         val cachedRaw = rawFilesCache.get(key)
 
-        if (cachedRaw != null && navState.searchQuery.isBlank()) {
-            // Serve cached data instantly — no loading indicator needed
+        // ── Fast path: serve from cache ──────────────────────────────────────────
+        // Covers both normal browsing and active search — no disk I/O at all.
+        // FileObserver (CREATE/DELETE/MOVED/CLOSE_WRITE) evicts the cache whenever
+        // the directory changes, keeping this data fresh.
+        if (cachedRaw != null) {
             _files.value = withContext(Dispatchers.Default) {
                 applySearchAndSort(cachedRaw, navState.searchQuery, navState.sortState, navState.showHidden)
             }
-        } else {
-            // First visit or active search — show spinner while disk is read
-            if (!_isRefreshing.value) _isLoading.value = true
+            return
         }
 
+        // ── Slow path: cache miss — read from disk ───────────────────────────────
+        if (!_isRefreshing.value) _isLoading.value = true
+
         try {
-            // Always do a fresh disk read to pick up any changes
-            val freshRaw = withContext(Dispatchers.IO) {
-                listRawFiles(File(navState.path), navState.showHidden)
-            }
-            val sorted = withContext(Dispatchers.Default) {
-                applySearchAndSort(freshRaw, navState.searchQuery, navState.sortState, navState.showHidden)
-            }
-            // Only cache non-search results (search results depend on the query)
-            if (navState.searchQuery.isBlank()) {
-                rawFilesCache.put(key, freshRaw)
-            }
-            _files.value = sorted
+            val directory = File(navState.path)
+            loadFilesInChunks(directory, navState, key)
         } catch (e: CancellationException) {
-            // collectLatest cancels previous loads on navigation — must re-throw.
             throw e
         } catch (e: Exception) {
             _errorMessage.value = "Failed to load folder: ${e.message}"
-            if (cachedRaw == null) _files.value = emptyList()
+            _files.value = emptyList()
         } finally {
             _isLoading.value = false
+            _isLoadingMore.value = false
         }
     }
 
-    /** Heavy IO: reads directory entries from disk and applies the hidden-file filter. */
-    private fun listRawFiles(directory: File, showHidden: Boolean): List<File> {
-        val all = directory.listFiles() ?: return emptyList()
-        return all.filter { showHidden || !it.isHidden }
+    /**
+     * Reads all files from disk in a single [File.listFiles] call, caches the raw list,
+     * sorts the entire list once, then emits it to the UI in sorted chunks.
+     *
+     * Because every chunk is a slice of the already-sorted list, new chunks simply
+     * append to the bottom — visible items never jump or reorder.
+     */
+    private suspend fun loadFilesInChunks(
+        directory: File,
+        navState: NavState,
+        cacheKey: String
+    ) {
+        // 1. Single disk read — no double listFiles() call
+        val rawFiles = withContext(Dispatchers.IO) {
+            listRawFiles(directory, navState.showHidden)
+        }
+
+        // 2. Cache raw (unsorted) list immediately so sort/filter changes are instant
+        rawFilesCache.put(cacheKey, rawFiles)
+
+        // 3. Sort the ENTIRE list once — O(n log n) but CPU-only and very fast
+        //    even for 1 000+ files (< 5 ms on typical Android hardware)
+        val sortedFiles = withContext(Dispatchers.Default) {
+            val filtered = if (navState.searchQuery.isNotBlank())
+                rawFiles.filter { it.name.contains(navState.searchQuery, ignoreCase = true) }
+            else rawFiles
+            filtered.sortedWith(buildComparator(navState.sortState))
+        }
+
+        // 4. Display in chunks — all chunks are slices of the sorted list,
+        //    so appending never causes any item to change position
+        if (sortedFiles.size <= chunkConfig.initialBatchSize) {
+            // Small directory: show everything at once, no chunking overhead
+            _files.value = sortedFiles
+            _isLoading.value = false
+        } else {
+            // Large directory: show initial batch immediately…
+            val accumulator = sortedFiles.take(chunkConfig.initialBatchSize).toMutableList()
+            _files.value = accumulator.toList()
+            _isLoading.value = false
+            _isLoadingMore.value = true
+
+            // …then append remaining sorted chunks one by one
+            val remainingChunks = sortedFiles.drop(chunkConfig.initialBatchSize)
+                .chunked(chunkConfig.chunkSize)
+
+            remainingChunks.forEachIndexed { index, chunk ->
+                delay(0)                                  // yield for cancellation check
+                if (index > 0) delay(chunkConfig.chunkDelayMs)
+                accumulator.addAll(chunk)
+                _files.value = accumulator.toList()
+            }
+
+            _isLoadingMore.value = false
+        }
     }
 
-    /** CPU-only: applies search filter, sorts, and triggers background folder-size jobs. */
-    private fun applySearchAndSort(
-        files: List<File>,
-        searchQuery: String,
-        sortState: SortState,
-        showHidden: Boolean
-    ): List<File> {
-        val filtered = if (searchQuery.isNotBlank())
-            files.filter { it.name.contains(searchQuery, ignoreCase = true) }
-        else files
-
-        val comparator: Comparator<File> = compareBy<File> { !it.isDirectory }.let { base ->
+    /**
+     * Builds a [Comparator] for the given [SortState].
+     * Folders always sort before files; within each group the chosen sort key applies.
+     */
+    private fun buildComparator(sortState: SortState): Comparator<File> =
+        compareBy<File> { !it.isDirectory }.let { base ->
             when (sortState.option) {
                 FileSortOption.NAME ->
                     if (sortState.ascending) base.thenBy { it.name.lowercase() }
@@ -309,8 +378,23 @@ class FileExplorerViewModel(application: Application) : AndroidViewModel(applica
             }
         }
 
-        val sorted = filtered.sortedWith(comparator)
-        return sorted
+    /** Heavy IO: reads directory entries from disk and applies the hidden-file filter. */
+    private fun listRawFiles(directory: File, showHidden: Boolean): List<File> {
+        val all = directory.listFiles() ?: return emptyList()
+        return all.filter { showHidden || !it.isHidden }
+    }
+
+    /** CPU-only: applies search filter and sort (used for cache-hit fast path). */
+    private fun applySearchAndSort(
+        files: List<File>,
+        searchQuery: String,
+        sortState: SortState,
+        showHidden: Boolean
+    ): List<File> {
+        val filtered = if (searchQuery.isNotBlank())
+            files.filter { it.name.contains(searchQuery, ignoreCase = true) }
+        else files
+        return filtered.sortedWith(buildComparator(sortState))
     }
 
 
@@ -393,6 +477,46 @@ class FileExplorerViewModel(application: Application) : AndroidViewModel(applica
             }
         }
         _sortState.value = SortState(option, newAscending)
+        
+        // Save the sort preference for the current folder
+        saveSortPreferenceForCurrentPath()
+    }
+
+    /**
+     * Loads the sort preference for the current folder path from SharedPreferences.
+     * If no preference exists, defaults to NAME/ascending.
+     */
+    private fun loadSortPreferenceForCurrentPath() {
+        loadSortPreferenceForPath(_currentPath.value)
+    }
+
+    /**
+     * Loads the sort preference for a specific folder path.
+     * @param path The folder path to load preferences for
+     */
+    private fun loadSortPreferenceForPath(path: String) {
+        val sortPref = SettingsManager.getFolderSort(getApplication(), path)
+        if (sortPref != null) {
+            val (optionName, ascending) = sortPref
+            val option = FileSortOption.valueOf(optionName)
+            _sortState.value = SortState(option, ascending)
+        } else {
+            // Default: NAME ascending for folders with no saved preference
+            _sortState.value = SortState(FileSortOption.NAME, true)
+        }
+    }
+
+    /**
+     * Saves the current sort preference for the current folder path to SharedPreferences.
+     */
+    private fun saveSortPreferenceForCurrentPath() {
+        val currentSort = _sortState.value
+        SettingsManager.saveFolderSort(
+            getApplication(),
+            _currentPath.value,
+            currentSort.option.name,
+            currentSort.ascending
+        )
     }
 
     // ── Single-file clipboard (bottom sheet) ──────────────────────────────────

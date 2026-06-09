@@ -349,11 +349,6 @@ private fun FavoriteFileItem(
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
-                    Text(
-                        text = DateFormat.format("MMM dd, yyyy HH:mm", Date(file.lastModified())).toString(),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
                 }
             }
 

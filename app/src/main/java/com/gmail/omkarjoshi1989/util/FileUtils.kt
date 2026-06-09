@@ -161,6 +161,74 @@ object FileUtils {
         name.replace(Regex("^(\\d+[\\s._\\-]*)+"), "").trim()
 
     /**
+     * Returns up to [limit] most recently modified media files (audio, video, images, PDF)
+     * across the entire device storage, queried via MediaStore — no recursive filesystem scan.
+     * Results are sorted by last-modified date descending (newest first).
+     */
+    fun getRecentMediaFiles(context: Context, limit: Int = 100): List<File> {
+        val result = mutableListOf<Pair<File, Long>>()
+
+        data class Query(val uri: android.net.Uri, val dataCol: String, val dateCol: String)
+
+        val queries = listOf(
+            Query(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI,
+                  MediaStore.Audio.Media.DATA,
+                  MediaStore.Audio.Media.DATE_MODIFIED),
+            Query(MediaStore.Video.Media.EXTERNAL_CONTENT_URI,
+                  MediaStore.Video.Media.DATA,
+                  MediaStore.Video.Media.DATE_MODIFIED),
+            Query(MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
+                  MediaStore.Images.Media.DATA,
+                  MediaStore.Images.Media.DATE_MODIFIED),
+        )
+
+        for (q in queries) {
+            try {
+                context.contentResolver.query(
+                    q.uri,
+                    arrayOf(q.dataCol, q.dateCol),
+                    null, null,
+                    "${q.dateCol} DESC"
+                )?.use { cursor ->
+                    val dataIdx = cursor.getColumnIndex(q.dataCol)
+                    val dateIdx = cursor.getColumnIndex(q.dateCol)
+                    if (dataIdx < 0 || dateIdx < 0) return@use
+                    while (cursor.moveToNext()) {
+                        val path = cursor.getString(dataIdx) ?: continue
+                        val date = cursor.getLong(dateIdx)
+                        val file = File(path)
+                        if (file.exists() && file.isFile) result.add(file to date)
+                    }
+                }
+            } catch (_: Exception) {}
+        }
+
+        // PDFs are not indexed in Audio/Video/Images — query Files table by MIME type
+        try {
+            context.contentResolver.query(
+                MediaStore.Files.getContentUri("external"),
+                arrayOf(MediaStore.Files.FileColumns.DATA, MediaStore.Files.FileColumns.DATE_MODIFIED),
+                "${MediaStore.Files.FileColumns.MIME_TYPE} = ?",
+                arrayOf("application/pdf"),
+                "${MediaStore.Files.FileColumns.DATE_MODIFIED} DESC"
+            )?.use { cursor ->
+                val dataIdx = cursor.getColumnIndex(MediaStore.Files.FileColumns.DATA)
+                val dateIdx = cursor.getColumnIndex(MediaStore.Files.FileColumns.DATE_MODIFIED)
+                if (dataIdx >= 0 && dateIdx >= 0) {
+                    while (cursor.moveToNext()) {
+                        val path = cursor.getString(dataIdx) ?: continue
+                        val date = cursor.getLong(dateIdx)
+                        val file = File(path)
+                        if (file.exists() && file.isFile) result.add(file to date)
+                    }
+                }
+            }
+        } catch (_: Exception) {}
+
+        return result.sortedByDescending { it.second }.take(limit).map { it.first }
+    }
+
+    /**
      * Resolves a [Uri] (content:// or file://) received from an external ACTION_VIEW intent
      * into a [File] pointing to the actual file on disk.
      *
