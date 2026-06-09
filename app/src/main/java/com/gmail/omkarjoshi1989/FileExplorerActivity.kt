@@ -270,6 +270,7 @@ class FileExplorerActivity : ComponentActivity() {
                         Screen.GLOBAL_SEARCH -> {
                             BackHandler { currentScreen = Screen.FILE_EXPLORER }
                             GlobalSearchScreen(
+                                viewModel = fileViewModel,
                                 onOpenFile = { file -> openFile(file) },
                                 onOpenFolder = { folder ->
                                     fileViewModel.navigateTo(folder.absolutePath)

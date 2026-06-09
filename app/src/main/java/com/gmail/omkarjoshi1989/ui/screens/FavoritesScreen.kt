@@ -1,6 +1,5 @@
 package com.gmail.omkarjoshi1989.ui.screens
 
-import android.text.format.DateFormat
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
@@ -50,6 +49,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.gmail.omkarjoshi1989.ui.components.FileThumbnail
+import com.gmail.omkarjoshi1989.ui.components.VideoProgressBar
 import com.gmail.omkarjoshi1989.util.FavoritesManager
 import com.gmail.omkarjoshi1989.util.FileUtils
 import com.gmail.omkarjoshi1989.util.RecycleBinManager
@@ -58,7 +58,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
-import java.util.Date
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
@@ -349,6 +348,11 @@ private fun FavoriteFileItem(
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
+                }
+
+                // ── Video playback progress bar (only for video files) ────────
+                if (!file.isDirectory && FileUtils.isVideoFile(file)) {
+                    VideoProgressBar(file = file)
                 }
             }
 
