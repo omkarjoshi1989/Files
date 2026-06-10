@@ -133,6 +133,7 @@ import com.gmail.omkarjoshi1989.util.MusicResumeManager
 import com.gmail.omkarjoshi1989.viewmodel.ClipboardOperation
 import com.gmail.omkarjoshi1989.viewmodel.FileSortOption
 import com.gmail.omkarjoshi1989.viewmodel.FileExplorerViewModel
+import com.gmail.omkarjoshi1989.viewmodel.UnzipProgressState
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -158,6 +159,7 @@ fun FileExplorerScreen(
 ) {
     val context = LocalContext.current
     val uiState by viewModel.uiState.collectAsState()
+    val unzipProgress by viewModel.unzipProgress.collectAsState()
     val snackbarHostState = remember { SnackbarHostState() }
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     val coroutineScope = rememberCoroutineScope()
@@ -317,12 +319,18 @@ fun FileExplorerScreen(
         // ── Bottom bar: appears in selection mode with batch operations ────────
         bottomBar = {
             if (isSelectionMode) {
+                // True when every selected item is a .zip file
+                val allSelectedAreZips = selectedPaths.isNotEmpty() &&
+                    selectedPaths.all { File(it).extension.equals("zip", ignoreCase = true) }
+
                 BottomAppBar(
                     containerColor = MaterialTheme.colorScheme.primaryContainer,
                     contentColor = MaterialTheme.colorScheme.onPrimaryContainer
                 ) {
                     Row(
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
                         horizontalArrangement = Arrangement.SpaceEvenly,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
@@ -366,6 +374,21 @@ fun FileExplorerScreen(
                         ) {
                             Icon(Icons.Filled.FolderZip, contentDescription = "Zip")
                             Text("Zip", style = MaterialTheme.typography.labelSmall)
+                        }
+                        // Unzip — shown only when ALL selected items are .zip files
+                        if (allSelectedAreZips) {
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                modifier = Modifier
+                                    .clickable {
+                                        viewModel.unzipFiles(selectedFiles())
+                                        selectedPaths = emptySet()
+                                    }
+                                    .padding(8.dp)
+                            ) {
+                                Icon(Icons.Filled.Archive, contentDescription = "Unzip")
+                                Text("Unzip", style = MaterialTheme.typography.labelSmall)
+                            }
                         }
                         // Delete
                         Column(
@@ -843,6 +866,11 @@ fun FileExplorerScreen(
             },
             dismissButton = { TextButton(onClick = { showCreateFileDialog = false }) { Text("Cancel") } }
         )
+    }
+
+    // ── In-app unzip progress overlay ─────────────────────────────────────────
+    unzipProgress?.let { progress ->
+        UnzipProgressDialog(progress = progress)
     }
 }
 
@@ -1328,4 +1356,91 @@ fun FileOperationItem(
         Text(text = label, style = MaterialTheme.typography.bodyLarge, color = tint)
     }
 }
+
+/**
+ * Non-dismissible in-app overlay shown while a ZIP extraction is running.
+ * Mirrors the notification-panel progress but displayed right inside the activity.
+ */
+@Composable
+fun UnzipProgressDialog(progress: UnzipProgressState) {
+    val fraction = if (progress.total > 0)
+        progress.current.toFloat() / progress.total.toFloat()
+    else 0f
+
+    AlertDialog(
+        onDismissRequest = { /* not dismissible while running */ },
+        title = {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                CircularProgressIndicator(modifier = Modifier.size(22.dp), strokeWidth = 2.5.dp)
+                Text(
+                    text = if (progress.totalFiles > 1)
+                        "Unzipping ${progress.fileIndex + 1} of ${progress.totalFiles}"
+                    else
+                        "Unzipping…",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold
+                )
+            }
+        },
+        text = {
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                // Archive name
+                Text(
+                    text = progress.archiveName,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.primary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+
+                // Progress bar + counters
+                if (progress.total > 0) {
+                    LinearProgressIndicator(
+                        progress = { fraction },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text(
+                            text = "${progress.current} / ${progress.total} entries",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Text(
+                            text = "${(fraction * 100).toInt()}%",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                } else {
+                    // Indeterminate while counting entries
+                    LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                }
+
+                // Current entry name
+                if (progress.currentEntry.isNotBlank() && progress.currentEntry != "Preparing…") {
+                    Text(
+                        text = progress.currentEntry,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+            }
+        },
+        // No buttons — dialog auto-dismisses when _unzipProgress becomes null
+        confirmButton = {}
+    )
+}
+
+
 

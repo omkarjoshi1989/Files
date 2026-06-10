@@ -26,6 +26,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.stateIn
@@ -51,6 +52,26 @@ enum class FileSortOption(val label: String) {
 data class ClipboardData(
     val files: List<File>,
     val operation: ClipboardOperation
+)
+
+/**
+ * Live progress state emitted during a ZIP extraction.
+ * Null when no extraction is running.
+ *
+ * @param archiveName   display name of the archive currently being extracted
+ * @param currentEntry  name of the ZIP entry being written right now
+ * @param current       entries extracted so far
+ * @param total         total entries in the current archive
+ * @param fileIndex     0-based index of the archive being processed (batch mode)
+ * @param totalFiles    total archives in the current batch
+ */
+data class UnzipProgressState(
+    val archiveName: String,
+    val currentEntry: String,
+    val current: Int,
+    val total: Int,
+    val fileIndex: Int  = 0,
+    val totalFiles: Int = 1
 )
 
 private data class SelectionState(
@@ -120,6 +141,10 @@ class FileExplorerViewModel(application: Application) : AndroidViewModel(applica
     private val _searchQuery = MutableStateFlow("")
     private val _isSearchActive = MutableStateFlow(false)
     private val _sortState = MutableStateFlow(SortState())
+
+    /** Emits live unzip progress; null when no extraction is running. */
+    private val _unzipProgress = MutableStateFlow<UnzipProgressState?>(null)
+    val unzipProgress: StateFlow<UnzipProgressState?> = _unzipProgress.asStateFlow()
 
     /** Async-loaded file list. Populated on Dispatchers.IO so the UI thread is never blocked. */
     private val _files = MutableStateFlow<List<File>>(emptyList())
@@ -774,32 +799,191 @@ class FileExplorerViewModel(application: Application) : AndroidViewModel(applica
     }
 
     fun unzipFile(zipFile: File) {
+        val context = getApplication<Application>()
         viewModelScope.launch {
             _isLoading.value = true
+
+            // Initial indeterminate progress — notification + in-app overlay
+            FileOperationNotificationHelper.showProgress(
+                context,
+                title = "Unzipping ${zipFile.name}",
+                text  = "Preparing…",
+                current = 0,
+                total   = 0
+            )
+            _unzipProgress.value = UnzipProgressState(
+                archiveName  = zipFile.name,
+                currentEntry = "Preparing…",
+                current = 0,
+                total   = 0
+            )
+
             try {
                 withContext(Dispatchers.IO) {
-                    val destination = zipFile.parentFile ?: return@withContext
-                    ZipInputStream(BufferedInputStream(FileInputStream(zipFile))).use { zis ->
-                        var entry = zis.nextEntry
-                        while (entry != null) {
-                            val outFile = File(destination, entry.name)
-                            if (entry.isDirectory) {
-                                outFile.mkdirs()
-                            } else {
-                                outFile.parentFile?.mkdirs()
-                                outFile.outputStream().use { zis.copyTo(it) }
-                            }
-                            zis.closeEntry()
-                            entry = zis.nextEntry
-                        }
+                    extractZip(zipFile) { current, total, entryName ->
+                        FileOperationNotificationHelper.showProgress(
+                            context,
+                            title   = "Unzipping ${zipFile.name}",
+                            text    = "$current / $total · $entryName",
+                            current = current,
+                            total   = total
+                        )
+                        _unzipProgress.value = UnzipProgressState(
+                            archiveName  = zipFile.name,
+                            currentEntry = entryName,
+                            current = current,
+                            total   = total
+                        )
                     }
                 }
+
+                FileOperationNotificationHelper.showCompletion(
+                    context,
+                    title = "Unzip complete",
+                    text  = "${zipFile.name} extracted successfully"
+                )
                 _operationMessage.value = "Unzipped: ${zipFile.name}"
                 refreshFiles()
             } catch (e: Exception) {
-                _errorMessage.value = "Unzip failed: ${e.message}"
+                val errMsg = e.message ?: "Unknown error"
+                FileOperationNotificationHelper.showError(
+                    context,
+                    title = "Unzip failed",
+                    text  = errMsg
+                )
+                _errorMessage.value = "Unzip failed: $errMsg"
             } finally {
+                _unzipProgress.value = null   // dismiss in-app overlay
                 _isLoading.value = false
+            }
+        }
+    }
+
+    fun unzipFiles(files: List<File>) {
+        if (files.isEmpty()) return
+        val context = getApplication<Application>()
+        val total   = files.size
+        viewModelScope.launch {
+            _isLoading.value = true
+
+            // Initial notification
+            FileOperationNotificationHelper.showProgress(
+                context,
+                title   = if (total == 1) "Unzipping ${files[0].name}" else "Unzipping $total archives",
+                text    = "Preparing…",
+                current = 0,
+                total   = total
+            )
+            _unzipProgress.value = UnzipProgressState(
+                archiveName  = if (total == 1) files[0].name else "$total archives",
+                currentEntry = "Preparing…",
+                current      = 0,
+                total        = 0,
+                fileIndex    = 0,
+                totalFiles   = total
+            )
+
+            try {
+                withContext(Dispatchers.IO) {
+                    files.forEachIndexed { fileIndex, zipFile ->
+                        // Per-archive notification header
+                        FileOperationNotificationHelper.showProgress(
+                            context,
+                            title   = if (total == 1) "Unzipping ${zipFile.name}"
+                                      else "Unzipping $total archives",
+                            text    = if (total == 1) zipFile.name
+                                      else "${fileIndex + 1} / $total · ${zipFile.name}",
+                            current = fileIndex,
+                            total   = total
+                        )
+                        _unzipProgress.value = UnzipProgressState(
+                            archiveName  = zipFile.name,
+                            currentEntry = "Preparing…",
+                            current      = 0,
+                            total        = 0,
+                            fileIndex    = fileIndex,
+                            totalFiles   = total
+                        )
+                        extractZip(zipFile) { current, entryTotal, entryName ->
+                            FileOperationNotificationHelper.showProgress(
+                                context,
+                                title   = if (total == 1) "Unzipping ${zipFile.name}"
+                                          else "Unzipping $total archives",
+                                text    = if (total == 1) "$current / $entryTotal · $entryName"
+                                          else "${fileIndex + 1} / $total · $entryName",
+                                current = if (total == 1) current else fileIndex,
+                                total   = if (total == 1) entryTotal else total
+                            )
+                            _unzipProgress.value = UnzipProgressState(
+                                archiveName  = zipFile.name,
+                                currentEntry = entryName,
+                                current      = current,
+                                total        = entryTotal,
+                                fileIndex    = fileIndex,
+                                totalFiles   = total
+                            )
+                        }
+                    }
+                }
+
+                val doneText = if (total == 1)
+                    "${files[0].name} extracted successfully"
+                else
+                    "$total archives extracted successfully"
+                FileOperationNotificationHelper.showCompletion(
+                    context,
+                    title = "Unzip complete",
+                    text  = doneText
+                )
+                _operationMessage.value = if (total == 1)
+                    "Unzipped: ${files[0].name}"
+                else
+                    "Unzipped $total archives"
+                refreshFiles()
+            } catch (e: Exception) {
+                val errMsg = e.message ?: "Unknown error"
+                FileOperationNotificationHelper.showError(
+                    context,
+                    title = "Unzip failed",
+                    text  = errMsg
+                )
+                _errorMessage.value = "Unzip failed: $errMsg"
+            } finally {
+                _unzipProgress.value = null   // dismiss in-app overlay
+                _isLoading.value = false
+            }
+        }
+    }
+
+    /**
+     * Extracts all entries of [zipFile] into its parent directory.
+     * [onProgress] is called after every entry with (entriesDone, totalEntries, entryName).
+     */
+    private fun extractZip(
+        zipFile: File,
+        onProgress: (current: Int, total: Int, entryName: String) -> Unit = { _, _, _ -> }
+    ) {
+        val destination = zipFile.parentFile ?: return
+
+        // Count entries upfront so progress is accurate
+        val totalEntries = java.util.zip.ZipFile(zipFile).use { it.size() }
+        var processed = 0
+
+        ZipInputStream(BufferedInputStream(FileInputStream(zipFile))).use { zis ->
+            var entry = zis.nextEntry
+            while (entry != null) {
+                val entryName = entry.name
+                val outFile   = File(destination, entryName)
+                if (entry.isDirectory) {
+                    outFile.mkdirs()
+                } else {
+                    outFile.parentFile?.mkdirs()
+                    outFile.outputStream().use { zis.copyTo(it) }
+                }
+                zis.closeEntry()
+                processed++
+                onProgress(processed, totalEntries, entryName)
+                entry = zis.nextEntry
             }
         }
     }
