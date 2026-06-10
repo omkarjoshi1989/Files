@@ -41,6 +41,7 @@ import androidx.compose.material.icons.filled.BrightnessHigh
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Pause
+import androidx.compose.material.icons.filled.PictureInPictureAlt
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Repeat
 import androidx.compose.material.icons.filled.RepeatOne
@@ -108,6 +109,7 @@ import kotlinx.coroutines.withContext
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.media.MediaMetadataRetriever
+import com.gmail.omkarjoshi1989.MediaViewerActivity
 import com.gmail.omkarjoshi1989.service.MusicPlaybackService
 import com.gmail.omkarjoshi1989.util.FileUtils
 import com.google.common.util.concurrent.MoreExecutors
@@ -127,6 +129,10 @@ fun MediaViewerScreen(
     initialIndex: Int,
     loopEnabled: Boolean = false,
     autoPlay: Boolean = true,
+    isInPipMode: Boolean = false,
+    onEnterPip: () -> Unit = {},
+    onVideoPageChanged: (Boolean) -> Unit = {},
+    onVideoPlayingChanged: (Boolean) -> Unit = {},
     onClose: () -> Unit
 ) {
     val context = LocalContext.current
@@ -160,6 +166,11 @@ fun MediaViewerScreen(
     val isLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
     val isCurrentFileVideo = currentFile != null && FileUtils.isVideoFile(currentFile)
     val pagerScrollEnabled = !(isLandscape && isCurrentFileVideo)
+
+    // Notify the host activity when the current page type changes (for auto-PiP)
+    LaunchedEffect(isCurrentFileVideo) {
+        onVideoPageChanged(isCurrentFileVideo)
+    }
 
     // ── Screen-level brightness override (shared across video pages) ────
     val screenActivity = remember(context) {
@@ -600,7 +611,10 @@ fun MediaViewerScreen(
                     musicController = musicController,
                     brightness = screenBrightness,
                     onBrightnessChange = { screenBrightness = it.coerceIn(0f, 1f) },
-                    onImmersiveChange = { immersive -> isImmersive = immersive }
+                    onImmersiveChange = { immersive -> isImmersive = immersive },
+                    isInPipMode = isInPipMode,
+                    onEnterPip = onEnterPip,
+                    onPlayingChanged = onVideoPlayingChanged
                 )
                                 FileUtils.isAudioFile(file) -> AudioPage(
                                     file = file,
@@ -629,7 +643,7 @@ fun MediaViewerScreen(
 
         // Top bar overlay with animation
         AnimatedVisibility(
-            visible = !isImmersive,
+            visible = !isImmersive && !isInPipMode,
             enter = slideInVertically(initialOffsetY = { -it }) + fadeIn(),
             exit = slideOutVertically(targetOffsetY = { -it }) + fadeOut()
         ) {
@@ -741,7 +755,10 @@ private fun VideoPage(
     musicController: MediaController?,
     brightness: Float,
     onBrightnessChange: (Float) -> Unit,
-    onImmersiveChange: (Boolean) -> Unit
+    onImmersiveChange: (Boolean) -> Unit,
+    isInPipMode: Boolean = false,
+    onEnterPip: () -> Unit = {},
+    onPlayingChanged: (Boolean) -> Unit = {}
 ) {
     val context = LocalContext.current
     val mediaUri = remember(file.absolutePath) { android.net.Uri.fromFile(file) }
@@ -785,6 +802,12 @@ private fun VideoPage(
         } catch (_: Exception) {}
     }
 
+    // ── Settings-menu state (hoisted so DisposableEffects can access them) ──
+    var currentSpeed by remember { mutableStateOf(1f) }
+    var availableAudioTracks by remember { mutableStateOf<List<Triple<Int, Int, String>>>(emptyList()) }
+    var selectedAudioGroupIdx by remember { mutableIntStateOf(-1) }
+    var selectedAudioTrackIdx by remember { mutableIntStateOf(-1) }
+
     LaunchedEffect(isActive, mediaUri) {
         if (isActive) {
             if (exoPlayer.currentMediaItem == null) {
@@ -798,6 +821,9 @@ private fun VideoPage(
 
                 exoPlayer.setMediaItem(MediaItem.fromUri(mediaUri), startPosition)
                 exoPlayer.prepare()
+                // Reset playback speed for the new file
+                exoPlayer.setPlaybackSpeed(1f)
+                currentSpeed = 1f
             }
             // Explicitly pause music service when video page becomes active
             musicController?.let { mc ->
@@ -978,6 +1004,75 @@ private fun VideoPage(
         }
     }
 
+        // ── Track available audio tracks for the settings menu ──────────────
+        DisposableEffect(exoPlayer, file.absolutePath) {
+            val listener = object : Player.Listener {
+                override fun onTracksChanged(tracks: Tracks) {
+                    val newTracks = mutableListOf<Triple<Int, Int, String>>()
+                    var groupIdx = 0
+                    var selGroup = -1
+                    var selTrack = -1
+                    for (group in tracks.groups) {
+                        if (group.type == C.TRACK_TYPE_AUDIO) {
+                            for (trackIdx in 0 until group.length) {
+                                val format = group.getTrackFormat(trackIdx)
+                                val lang = format.language
+                                val lbl = format.label
+                                val displayName = when {
+                                    !lang.isNullOrBlank() && !lbl.isNullOrBlank() -> "$lang – $lbl"
+                                    !lang.isNullOrBlank() -> lang
+                                    !lbl.isNullOrBlank() -> lbl
+                                    else -> "Track ${newTracks.size + 1}"
+                                }
+                                newTracks.add(Triple(groupIdx, trackIdx, displayName))
+                                if (group.isTrackSelected(trackIdx)) {
+                                    selGroup = groupIdx
+                                    selTrack = trackIdx
+                                }
+                            }
+                            groupIdx++
+                        }
+                    }
+                    availableAudioTracks = newTracks
+                    if (selGroup >= 0) {
+                        selectedAudioGroupIdx = selGroup
+                        selectedAudioTrackIdx = selTrack
+                    }
+                }
+            }
+            exoPlayer.addListener(listener)
+            onDispose { exoPlayer.removeListener(listener) }
+        }
+
+    // ── PiP play/pause: expose the active exoPlayer directly so the broadcast
+    //    receiver can call pause()/play() without going through Compose state.
+    DisposableEffect(exoPlayer, isActive) {
+        if (isActive) {
+            MediaViewerActivity.activePipPlayer = exoPlayer
+        }
+        onDispose {
+            // Only clear if we set it (prevents a later inactive page from
+            // clearing the reference set by the newly-active page).
+            if (MediaViewerActivity.activePipPlayer === exoPlayer) {
+                MediaViewerActivity.activePipPlayer = null
+            }
+        }
+    }
+
+    // ── Report playing state to the Activity so the PiP button icon stays in sync ──
+    // Only the active page reports — non-active pages have their player stopped/cleared.
+    DisposableEffect(exoPlayer, isActive) {
+        if (!isActive) return@DisposableEffect onDispose { }
+        val playingListener = object : Player.Listener {
+            override fun onIsPlayingChanged(playing: Boolean) {
+                onPlayingChanged(playing)
+            }
+        }
+        exoPlayer.addListener(playingListener)
+        onPlayingChanged(exoPlayer.isPlaying)   // sync current state immediately
+        onDispose { exoPlayer.removeListener(playingListener) }
+    }
+
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -1060,9 +1155,109 @@ private fun VideoPage(
             update = { playerView ->
                 playerView.player = exoPlayer
                 playerViewRef = playerView
+                // ── Inject PiP into ExoPlayer's existing gear/settings popup ──────────
+                // We find the built-in settings button and replace its click listener with
+                // one that shows a native PopupMenu containing PiP, speed, and audio options.
+                try {
+                    val settingsBtn = playerView.findViewById<android.view.View>(
+                        androidx.media3.ui.R.id.exo_settings
+                    )
+                    settingsBtn?.setOnClickListener { anchorView ->
+                        val popup = android.widget.PopupMenu(anchorView.context, anchorView)
+
+                        // ── Picture in Picture ────────────────────────────────────────
+                        popup.menu.add(0, 0, 0, "Picture in Picture")
+
+                        // ── Playback Speed ────────────────────────────────────────────
+                        popup.menu.add(1, 1, 1, "— Playback Speed —").also { it.isEnabled = false }
+                        val speeds = listOf(0.5f, 0.75f, 1f, 1.25f, 1.5f, 2f)
+                        popup.menu.setGroupCheckable(2, true, true)
+                        speeds.forEachIndexed { idx, speed ->
+                            val lbl = if (speed == 1f) "Normal (1×)" else "${speed}×"
+                            popup.menu.add(2, 100 + idx, 10 + idx, lbl).also { item ->
+                                item.isCheckable = true
+                                item.isChecked = (speed == currentSpeed)
+                            }
+                        }
+
+                        // ── Audio Tracks (only if multiple tracks exist) ───────────────
+                        val trackList = availableAudioTracks
+                        if (trackList.size > 1) {
+                            popup.menu.add(3, 200, 30, "— Audio Track —").also { it.isEnabled = false }
+                            popup.menu.setGroupCheckable(4, true, true)
+                            trackList.forEachIndexed { idx, triple ->
+                                popup.menu.add(4, 300 + idx, 40 + idx, triple.third).also { item ->
+                                    item.isCheckable = true
+                                    item.isChecked = (triple.first == selectedAudioGroupIdx &&
+                                            triple.second == selectedAudioTrackIdx)
+                                }
+                            }
+                        }
+
+                        popup.setOnMenuItemClickListener { item ->
+                            when {
+                                item.itemId == 0 -> {
+                                    onEnterPip()
+                                    true
+                                }
+                                item.itemId in 100..105 -> {
+                                    val speed = speeds[item.itemId - 100]
+                                    currentSpeed = speed
+                                    try { exoPlayer.setPlaybackSpeed(speed) } catch (_: Exception) {}
+                                    true
+                                }
+                                item.itemId in 300..399 -> {
+                                    val info = trackList.getOrNull(item.itemId - 300)
+                                    if (info != null) {
+                                        try {
+                                            val tracks = exoPlayer.currentTracks
+                                            var cnt = 0
+                                            for (group in tracks.groups) {
+                                                if (group.type == C.TRACK_TYPE_AUDIO) {
+                                                    if (cnt == info.first) {
+                                                        exoPlayer.trackSelectionParameters =
+                                                            exoPlayer.trackSelectionParameters
+                                                                .buildUpon()
+                                                                .setOverrideForType(
+                                                                    TrackSelectionOverride(
+                                                                        group.mediaTrackGroup,
+                                                                        info.second
+                                                                    )
+                                                                ).build()
+                                                        selectedAudioGroupIdx = info.first
+                                                        selectedAudioTrackIdx = info.second
+                                                        break
+                                                    }
+                                                    cnt++
+                                                }
+                                            }
+                                        } catch (_: Exception) {}
+                                    }
+                                    true
+                                }
+                                else -> false
+                            }
+                        }
+                        popup.show()
+                    }
+                } catch (_: Exception) {}
             },
             modifier = Modifier.fillMaxSize()
         )
+
+        // Hide the ExoPlayer built-in controller while in PiP (it is too small to use).
+        // Restore auto-show behaviour when returning to full-screen.
+        LaunchedEffect(isInPipMode) {
+            val pv = playerViewRef
+            if (pv != null) {
+                if (isInPipMode) {
+                    pv.hideController()
+                    pv.controllerAutoShow = false
+                } else {
+                    pv.controllerAutoShow = true
+                }
+            }
+        }
 
         // Tap overlay (active only while controller is hidden): single tap
         // re-shows the controller; double-tap on the left half rewinds 10s,
@@ -1117,7 +1312,7 @@ private fun VideoPage(
         )
 
         AnimatedVisibility(
-            visible = controlsVisible,
+            visible = controlsVisible && !isInPipMode,
             enter = fadeIn(),
             exit = fadeOut(),
             modifier = Modifier.fillMaxSize()
@@ -1127,7 +1322,7 @@ private fun VideoPage(
                     .fillMaxSize()
                     .systemBarsPadding()
             ) {
-                // Brightness (left) + Volume (right) — both grouped on the right edge
+                // Brightness + Volume sliders on the right edge
                 Row(
                     modifier = Modifier
                         .align(Alignment.CenterEnd)
@@ -1167,8 +1362,7 @@ private fun VideoPage(
                                         newVolume,
                                         0
                                     )
-                                } catch (_: SecurityException) {
-                                }
+                                } catch (_: SecurityException) {}
                             }
                         }
                     )

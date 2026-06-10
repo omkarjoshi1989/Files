@@ -1,15 +1,19 @@
 package com.gmail.omkarjoshi1989.ui.components
 
+import android.media.MediaMetadataRetriever
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -30,6 +34,8 @@ import coil.request.CachePolicy
 import coil.request.ImageRequest
 import coil.request.Parameters
 import coil.size.Precision
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import java.io.File
 import kotlin.math.absoluteValue
 
@@ -85,6 +91,72 @@ fun FileThumbnail(
                     .clip(RoundedCornerShape(6.dp)),
                 contentScale = ContentScale.Crop
             )
+        }
+
+        extension in audioExtensions -> {
+            val context = LocalContext.current
+            val placeholder = remember { ColorPainter(Color(0xFFFF9800)) }
+
+            // Asynchronously extract embedded album art on IO dispatcher
+            val albumArt by produceState<ByteArray?>(
+                initialValue = null,
+                key1 = file.absolutePath,
+                key2 = file.lastModified()
+            ) {
+                value = withContext(Dispatchers.IO) {
+                    try {
+                        val retriever = MediaMetadataRetriever()
+                        retriever.setDataSource(file.absolutePath)
+                        val art = retriever.embeddedPicture
+                        retriever.release()
+                        art
+                    } catch (_: Exception) {
+                        null
+                    }
+                }
+            }
+
+            if (albumArt != null) {
+                val imageRequest = remember(file.absolutePath, file.lastModified()) {
+                    ImageRequest.Builder(context)
+                        .data(albumArt)
+                        .size(120)
+                        .precision(Precision.INEXACT)
+                        .allowHardware(false)
+                        .diskCachePolicy(CachePolicy.ENABLED)
+                        .memoryCachePolicy(CachePolicy.ENABLED)
+                        .memoryCacheKey("audio:${file.absolutePath}:${file.lastModified()}")
+                        .diskCacheKey("audio:${file.absolutePath}:${file.lastModified()}")
+                        .build()
+                }
+                AsyncImage(
+                    model = imageRequest,
+                    placeholder = placeholder,
+                    error = placeholder,
+                    contentDescription = file.name,
+                    modifier = modifier
+                        .size(size)
+                        .clip(RoundedCornerShape(6.dp)),
+                    contentScale = ContentScale.Crop
+                )
+            } else {
+                // Fallback: music note icon with orange background
+                val bgColor = remember(extension) { getExtensionColor(extension) }
+                Box(
+                    modifier = modifier
+                        .size(size)
+                        .clip(RoundedCornerShape(6.dp))
+                        .background(bgColor),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.MusicNote,
+                        contentDescription = null,
+                        tint = Color.White,
+                        modifier = Modifier.size(size * 0.6f)
+                    )
+                }
+            }
         }
 
         extension in videoExtensions -> {
@@ -176,6 +248,10 @@ private fun getExtensionColor(extension: String): Color {
         }
     }
 }
+
+private val audioExtensions = setOf(
+    "mp3", "wav", "flac", "aac", "ogg", "m4a", "wma", "opus", "aiff", "alac"
+)
 
 private val imageExtensions = setOf(
     "jpg", "jpeg", "png", "gif", "bmp", "webp", "heic", "heif", "svg", "ico"

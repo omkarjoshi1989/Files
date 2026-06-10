@@ -47,7 +47,8 @@
             android:exported="true"
             android:launchMode="singleTop"
             android:theme="@style/Theme.Files"
-            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize">
+            android:supportsPictureInPicture="true"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden">
 
             <!-- Open images shared/viewed from other apps (content:// URIs) -->
             <intent-filter>
