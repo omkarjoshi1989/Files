@@ -29,12 +29,17 @@ A fully native Android file manager that goes beyond just listing files. It comb
 - 📊 **File metadata** — file size, last modified date; folders show item count and direct-file sizes
 - 🎞️ **Video playback progress** — video files show a thin progress bar + percentage under the filename so you know where you left off at a glance
 - ⭐ **Favorite star badge** — starred files display a gold star badge right in the file list
-- 🔢 **Paginated loading** — loads 100 items at a time; more items load automatically as you scroll down
+- 🔢 **Paginated loading** — loads 200 items initially, then 150 more per chunk; more items load automatically as you scroll down
 - 🔄 **Pull-to-refresh** — pull down anywhere in a folder to reload its contents instantly
+- 🔃 **File sorting** — ⋮ menu → **Sort by Name / Date Modified / Size / Type**; tap the same option again to toggle ascending ↑ / descending ↓ order; current direction shown with an arrow indicator
+- 📄 **PDF reading progress** — PDF files show an inline reading-progress percentage (e.g. `43%`) in the file list, updated every time you return from the viewer
+- 🎵 **Quick music access** — ▶ button in the top bar reopens the last-played track in the music player without browsing to it manually
+- ⬅️ **Double-back to exit** — pressing back from the root folder shows *"Press back again to exit"*; a second press within 2 seconds closes the app
 
 ### 🗃️ File Operations
 
 - ✂️ **Cut / Copy / Paste** — long-press or use multi-select; a floating "Paste here" button appears in the destination folder
+- ❌ **Cancel clipboard** — a ✕ FAB appears alongside the Paste button to discard the clipboard without pasting
 - ✏️ **Rename** — inline rename dialog for any file or folder
 - 🗑️ **Move to Recycle Bin** — safe deletion with confirmation; deleted items can always be restored
 - 📤 **Share** — share any file or a batch selection to any installed app
@@ -42,6 +47,7 @@ A fully native Android file manager that goes beyond just listing files. It comb
 - 📝 **Create new file** — tap ＋ → New File → type a filename with extension → creates an empty file
 - 🗜️ **Zip** — multi-select files/folders → Zip → name your archive → creates a `.zip`
 - 📦 **Unzip** — long-press any `.zip` file → "Unzip here" → extracts contents to the same folder
+- 🔍 **ZIP Viewer** — tap any `.zip` file to browse its contents in-app without extracting; breadcrumb bar lets you navigate nested folders inside the archive; back button climbs back up through ZIP directories
 
 ### 🔎 Global Search
 
@@ -69,7 +75,7 @@ A fully native Android file manager that goes beyond just listing files. It comb
 The hamburger menu (≡) gives you quick access to organized views of your device:
 
 - 💾 **Internal Storage** — browse the full file system with a live storage usage bar (used / total / %)
-- 🎵 **Music** — shows only audio files, filtered across all folders
+- 🎵 **Music** — hierarchical folder-first browser; shows sub-folders (with song count) and audio files inside each folder; tap a folder to drill down; opens the music player when you tap a track
 - 🖼️ **Images** — all image files across the device
 - 🎬 **Videos** — all video files across the device
 - 📷 **Images & Videos** — combined gallery view
@@ -126,22 +132,11 @@ The hamburger menu (≡) gives you quick access to organized views of your devic
 - 🔔 **Media notification** — persistent notification with play/pause/skip controls powered by Media3 MediaSessionService
 - 🏃 **Background playback** — music keeps playing even after closing the app or locking the screen
 - 📍 **Resume position** — saves your playback position every ~5 seconds; reopening the player resumes from where you left off
+- 🎶 **Auto-launch on open** — if music from Files is already playing when you open the app, the Music Player launches automatically so you can see what's playing
 - 📐 **Landscape layout** — album art on the left, controls on the right in landscape orientation
 - 🎵 **Track numbering** — shows "2 / 14" style track counter in the top bar
 
 ### 🪟 Home-Screen Music Widget
-
-Add the **Music Player** widget to your Android home screen for instant playback control — no need to open the app.
-
-```
-╔══════════════════════════════════════════════╗
-║  ┌──────┐  Song Title (centered)             ║
-║  │Album │  [◀◀]   [ ▶/⏸ ]   [▶▶]   [🔁]   ║
-║  │  Art │                                    ║
-║  └──────┘                                    ║
-╚══════════════════════════════════════════════╝
-```
-
 - 🖼️ **Album art** — embedded cover art shown on the left in a compact rounded tile; falls back to a music note icon when none is embedded
 - 🏷️ **Track name** — file name displayed centre-aligned next to the art, ellipsised when it overflows
 - ⏮️ **Previous** — skip to the previous track in the current folder playlist
@@ -164,9 +159,24 @@ Add the **Music Player** widget to your Android home screen for instant playback
 
 ## 🤖 Applications Manager
 
-- 📱 **Browse all installed apps** — grid view of every app on the device with icons and names
+- 📱 **Browse all installed apps** — 7-column icon grid of every openable app on the device with icons and names; total app count shown in the top bar
 - 🔍 **Search apps** — real-time filter by app name
-- ⚙️ **Open App Settings** — long-press any app to jump directly to its Android settings page
+- 🚀 **Launch app** — tap any icon to open it directly
+- ⚙️ **Open App Settings** — long-press any app → **App Info** jumps to its Android settings page
+- 🙈 **Hide App** — long-press any app → **Hide App** removes it from the main list; hidden apps move to a separate **Hidden Apps** section, shown dimmed
+- 👁️ **Unhide App** — long-press a hidden app → **Unhide App** restores it to the main list
+- 🗑️ **Uninstall App** — long-press any user-installed app → **Uninstall App** triggers the system uninstall dialog; the list refreshes automatically when you return
+
+---
+
+## 🔔 File Operation Notifications
+
+Copy and move (cut-paste) operations show live system-tray notifications so you always know what's happening in the background:
+
+- 📊 **Progress notification** — ongoing, cannot be dismissed; shows title (e.g. *"Copying 3 files"*), current file name, and an animated progress bar tracking files processed vs. total
+- ✅ **Completion notification** — replaces the progress notice when done (e.g. *"Copy complete — 3 items pasted to Downloads"*); stays in the panel until you swipe it away
+- ❌ **Error notification** — displayed if the operation fails, with a brief description of what went wrong
+- 🔕 **Silent** — no sound or vibration; low-priority channel so it never interrupts you
 
 ---
 
@@ -203,6 +213,8 @@ Add the **Music Player** widget to your Android home screen for instant playback
 - 👁️ **Show Hidden Files** — globally toggle visibility of dot-prefixed files and folders
 - 🌗 **Theme** — three-way segmented button: **System** (follows OS), **Light**, **Dark**; applies instantly across the whole app and persists across restarts
 - 🎵 **Background Video Playback** — toggle whether video audio continues when the app is minimized
+- 🏷️ **Build version** — current version name shown at the top of the screen
+- 🔗 **GitHub Releases link** — tappable URL that opens the releases page in the browser for changelog and updates
 
 ---
 
