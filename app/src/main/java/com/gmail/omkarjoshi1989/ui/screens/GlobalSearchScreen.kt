@@ -34,6 +34,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.FileProvider
 import com.gmail.omkarjoshi1989.ui.components.FileThumbnail
+import com.gmail.omkarjoshi1989.ui.components.VideoProgressBar
 import com.gmail.omkarjoshi1989.util.FavoritesManager
 import com.gmail.omkarjoshi1989.util.FileUtils
 import com.gmail.omkarjoshi1989.viewmodel.FileExplorerViewModel
@@ -504,6 +505,10 @@ private fun GlobalSearchResultItem(
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
+                // ── Video playback progress bar (only for video files) ────────
+                if (!file.isDirectory && FileUtils.isVideoFile(file)) {
+                    VideoProgressBar(file = file)
+                }
                 // Show parent folder path as subtitle
                 val parentPath = file.parentFile?.let { parent ->
                     val storageRoot = Environment.getExternalStorageDirectory().absolutePath

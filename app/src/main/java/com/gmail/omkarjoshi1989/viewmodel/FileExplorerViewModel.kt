@@ -13,6 +13,7 @@ import android.webkit.MimeTypeMap
 import androidx.core.content.FileProvider
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.gmail.omkarjoshi1989.util.FileOperationNotificationHelper
 import com.gmail.omkarjoshi1989.util.RecycleBinManager
 import com.gmail.omkarjoshi1989.util.SettingsManager
 import com.gmail.omkarjoshi1989.util.ChunkedFileLoader
@@ -581,17 +582,46 @@ class FileExplorerViewModel(application: Application) : AndroidViewModel(applica
 
     fun paste() {
         val clipData = _clipboard.value ?: return
+        val context   = getApplication<Application>()
+        val total     = clipData.files.size
+        val isCut     = clipData.operation == ClipboardOperation.CUT
+        val opVerb    = if (isCut) "Moving" else "Copying"
+        val doneVerb  = if (isCut) "Moved"  else "Copied"
+
         viewModelScope.launch {
             _isLoading.value = true
+
+            // ── initial progress notification ────────────────────────────────
+            FileOperationNotificationHelper.showProgress(
+                context,
+                title   = "$opVerb ${if (total == 1) clipData.files[0].name else "$total items"}",
+                text    = "Preparing…",
+                current = 0,
+                total   = total
+            )
+
             try {
                 withContext(Dispatchers.IO) {
-                    clipData.files.forEach { sourceFile ->
+                    clipData.files.forEachIndexed { index, sourceFile ->
+                        // ── per-file progress update ─────────────────────────
+                        FileOperationNotificationHelper.showProgress(
+                            context,
+                            title   = "$opVerb ${if (total == 1) sourceFile.name else "$total items"}",
+                            text    = if (total == 1) sourceFile.name
+                                      else "${index + 1} / $total · ${sourceFile.name}",
+                            current = index,
+                            total   = total
+                        )
+
                         val destination = File(_currentPath.value, sourceFile.name)
-                        if (sourceFile.absolutePath == destination.absolutePath) return@forEach
+                        if (sourceFile.absolutePath == destination.absolutePath) return@forEachIndexed
+
                         when (clipData.operation) {
                             ClipboardOperation.COPY -> {
-                                if (sourceFile.isDirectory) sourceFile.copyRecursively(destination, overwrite = false)
-                                else sourceFile.copyTo(destination, overwrite = false)
+                                if (sourceFile.isDirectory)
+                                    sourceFile.copyRecursively(destination, overwrite = false)
+                                else
+                                    sourceFile.copyTo(destination, overwrite = false)
                             }
                             ClipboardOperation.CUT -> {
                                 if (sourceFile.isDirectory) {
@@ -605,12 +635,35 @@ class FileExplorerViewModel(application: Application) : AndroidViewModel(applica
                         }
                     }
                 }
+
                 _clipboard.value = null
-                val count = clipData.files.size
-                _operationMessage.value = if (count == 1) "Pasted: ${clipData.files[0].name}" else "Pasted $count items"
+                val destFolder = File(_currentPath.value).name
+                val completionText = if (total == 1)
+                    "${clipData.files[0].name} → $destFolder"
+                else
+                    "$total items → $destFolder"
+
+                // ── persistent completion notification ───────────────────────
+                FileOperationNotificationHelper.showCompletion(
+                    context,
+                    title = "$doneVerb${if (total == 1) "" else " $total items"}",
+                    text  = completionText
+                )
+
+                _operationMessage.value =
+                    if (total == 1) "Pasted: ${clipData.files[0].name}"
+                    else "Pasted $total items"
+
                 refreshFiles()
+
             } catch (e: Exception) {
-                _errorMessage.value = "Paste failed: ${e.message}"
+                val errMsg = e.message ?: "Unknown error"
+                FileOperationNotificationHelper.showError(
+                    context,
+                    title = "Paste failed",
+                    text  = errMsg
+                )
+                _errorMessage.value = "Paste failed: $errMsg"
             } finally {
                 _isLoading.value = false
             }
