@@ -123,6 +123,7 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.gmail.omkarjoshi1989.MediaViewerActivity
 import com.gmail.omkarjoshi1989.MusicPlayerActivity
 import com.gmail.omkarjoshi1989.model.CollectionType
+import com.gmail.omkarjoshi1989.model.FileItem
 import com.gmail.omkarjoshi1989.model.folderContainsMatchingFiles
 import com.gmail.omkarjoshi1989.model.matchesFile
 import com.gmail.omkarjoshi1989.ui.components.FileThumbnail
@@ -194,7 +195,7 @@ fun FileExplorerScreen(
     // PERFORMANCE: filtering runs on Dispatchers.IO (folderContainsMatchingFiles can
     // recurse through thousands of files on large devices like DCIM with 1000+ items).
     // Results are cached inside CollectionType so subsequent calls are instant.
-    var displayFiles by remember { mutableStateOf<List<File>>(emptyList()) }
+    var displayFiles by remember { mutableStateOf<List<FileItem>>(emptyList()) }
     // Tracks whether the async collection-filter pass is still running so we can
     // show a loading indicator instead of a premature "no files found" message.
     var isFilteringFiles by remember { mutableStateOf(collectionFilter != null) }
@@ -202,9 +203,9 @@ fun FileExplorerScreen(
         if (collectionFilter != null) {
             isFilteringFiles = true
             displayFiles = withContext(Dispatchers.IO) {
-                uiState.files.filter { file ->
-                    if (file.isDirectory) collectionFilter.folderContainsMatchingFiles(file)
-                    else collectionFilter.matchesFile(file)
+                uiState.files.filter { item ->
+                    if (item.isDirectory) collectionFilter.folderContainsMatchingFiles(item.file)
+                    else collectionFilter.matchesFile(item.file)
                 }
             }
             isFilteringFiles = false
@@ -240,7 +241,11 @@ fun FileExplorerScreen(
     DisposableEffect(lifecycleOwner) {
         val obs = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
-                viewModel.refresh()
+                // Lightweight freshness check — does NOT invalidate the cache.
+                // Shows cached data instantly; silently reloads only if the directory
+                // actually changed (e.g. camera added a new photo).  Avoids the 8-10 s
+                // spinner previously triggered by returning from the photo viewer.
+                viewModel.requestFreshnessCheck()
                 favoritePaths = FavoritesManager.getFavorites(context)
             }
         }
@@ -640,36 +645,34 @@ fun FileExplorerScreen(
             }
 
             LazyColumn(modifier = Modifier.fillMaxSize()) {
-                items(displayFiles, key = { it.absolutePath }) { file ->
-                    val isSelected = file.absolutePath in selectedPaths
+                items(displayFiles, key = { it.absolutePath }) { item ->
+                    val isSelected = item.absolutePath in selectedPaths
                     FileListItem(
-                        file = file,
+                        item = item,
                         viewModel = viewModel,
                         showHiddenFiles = uiState.showHiddenFiles,
-                        isFavorite = file.absolutePath in favoritePaths,
+                        isFavorite = item.absolutePath in favoritePaths,
                         isSelectionMode = isSelectionMode,
                         isSelected = isSelected,
                         onSelectionToggle = {
                             selectedPaths = if (isSelected)
-                                selectedPaths - file.absolutePath
+                                selectedPaths - item.absolutePath
                             else
-                                selectedPaths + file.absolutePath
+                                selectedPaths + item.absolutePath
                         },
                         onClick = {
                             if (isSelectionMode) {
-                                // In selection mode: tap toggles selection
                                 selectedPaths = if (isSelected)
-                                    selectedPaths - file.absolutePath
+                                    selectedPaths - item.absolutePath
                                 else
-                                    selectedPaths + file.absolutePath
+                                    selectedPaths + item.absolutePath
                             } else {
-                                if (file.isDirectory) viewModel.navigateTo(file.absolutePath)
-                                else onOpenFile(file)
+                                if (item.isDirectory) viewModel.navigateTo(item.absolutePath)
+                                else onOpenFile(item.file)
                             }
                         },
                         onLongClick = {
-                            // Long-press ALWAYS enters / extends selection mode
-                            selectedPaths = selectedPaths + file.absolutePath
+                            selectedPaths = selectedPaths + item.absolutePath
                         }
                     )
                 }
@@ -1133,7 +1136,7 @@ fun BreadcrumbBar(
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun FileListItem(
-    file: File,
+    item: FileItem,
     viewModel: FileExplorerViewModel,
     showHiddenFiles: Boolean = false,
     isFavorite: Boolean = false,
@@ -1143,17 +1146,13 @@ fun FileListItem(
     onClick: () -> Unit,
     onLongClick: () -> Unit
 ) {
-    // Pre-compute stable values to avoid recomposition
-    val isHidden = remember(file) { file.name.startsWith(".") }
-    val isDirectory = remember(file) { file.isDirectory }
-    val fileName = remember(file) { file.name }
-    
+    // All metadata comes from pre-fetched FileItem fields — zero filesystem calls on main thread
     val selectionColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)
     Column(
         modifier = Modifier
             .fillMaxWidth()
             .background(if (isSelected) selectionColor else androidx.compose.ui.graphics.Color.Transparent)
-            .alpha(if (isHidden) 0.5f else 1f)
+            .alpha(if (item.isHidden) 0.5f else 1f)
             .combinedClickable(onClick = { if (isSelectionMode) onSelectionToggle() else onClick() }, onLongClick = onLongClick)
     ) {
         Row(
@@ -1162,45 +1161,52 @@ fun FileListItem(
                 .padding(horizontal = 16.dp, vertical = 12.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            FileThumbnail(file = file, size = 40.dp)
+            // Pass pre-fetched metadata so FileThumbnail never calls stat() on main thread
+            FileThumbnail(
+                absolutePath = item.absolutePath,
+                isDirectory  = item.isDirectory,
+                extension    = item.extension,
+                lastModified = item.lastModified,
+                size         = 40.dp
+            )
             Spacer(modifier = Modifier.width(12.dp))
 
             Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    text = fileName,
+                    text = item.name,
                     style = MaterialTheme.typography.bodyLarge,
-                    fontWeight = if (isDirectory) FontWeight.Medium else FontWeight.Normal,
+                    fontWeight = if (item.isDirectory) FontWeight.Medium else FontWeight.Normal,
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis
                 )
 
-                // ── Video playback progress bar (only for video files) ────────
-                if (!isDirectory && FileUtils.isVideoFile(file)) {
-                    VideoProgressBar(file = file)
+                // ── Video progress bar (only for video files) ─────────────────
+                if (!item.isDirectory && item.extension in videoExtensionsSet) {
+                    VideoProgressBar(file = item.file)
                 }
 
                 Spacer(modifier = Modifier.height(2.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    if (!file.isDirectory) {
+                    if (!item.isDirectory) {
+                        // size is pre-fetched — no stat() call here
                         Text(
-                            text = viewModel.formatFileSize(file.length()),
+                            text = viewModel.formatFileSize(item.size),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     } else {
-                        // Compute item count and direct-files-only size off the main thread
+                        // Folder item-count + direct-file size: computed lazily off main thread
                         data class FolderInfo(val itemCount: Int, val directSize: Long)
                         val folderInfo by produceState<FolderInfo?>(
                             initialValue = null,
-                            key1 = file.absolutePath,
+                            key1 = item.absolutePath,
                             key2 = showHiddenFiles
                         ) {
                             value = withContext(Dispatchers.IO) {
-                                val entries = file.listFiles()
-                                    ?.filter { showHiddenFiles || !it.isHidden }
+                                val entries = item.file.listFiles()
+                                    ?.filter { showHiddenFiles || !it.name.startsWith(".") }
                                     ?: emptyList()
                                 val count = entries.size
-                                // Sum sizes of direct files only — skip subdirectories
                                 val size = entries.filter { it.isFile }.sumOf { it.length() }
                                 FolderInfo(count, size)
                             }
@@ -1217,10 +1223,10 @@ fun FileListItem(
                         )
                     }
 
-                    // ── PDF reading progress % (text only, no bar) ────────────
-                    if (!file.isDirectory && file.extension.lowercase() == "pdf") {
+                    // ── PDF reading progress % ────────────────────────────────
+                    if (!item.isDirectory && item.extension == "pdf") {
                         val pdfCtx = LocalContext.current
-                        var pdfResumeTick by remember(file.absolutePath) { mutableStateOf(0) }
+                        var pdfResumeTick by remember(item.absolutePath) { mutableStateOf(0) }
                         val pdfLifecycleOwner = LocalLifecycleOwner.current
                         DisposableEffect(pdfLifecycleOwner) {
                             val observer = LifecycleEventObserver { _, event ->
@@ -1231,7 +1237,7 @@ fun FileListItem(
                         }
                         val pdfPercent by produceState<Int?>(
                             initialValue = null,
-                            key1 = file.absolutePath,
+                            key1 = item.absolutePath,
                             key2 = pdfResumeTick
                         ) {
                             value = withContext(Dispatchers.IO) {
@@ -1239,7 +1245,7 @@ fun FileListItem(
                                     "pdf_scroll_positions",
                                     android.content.Context.MODE_PRIVATE
                                 )
-                                val prefKey = "${file.absolutePath.length}_${file.absolutePath.hashCode()}"
+                                val prefKey = "${item.absolutePath.length}_${item.absolutePath.hashCode()}"
                                 val page  = prefs.getInt("${prefKey}_p", -1)
                                 val total = prefs.getInt("${prefKey}_total", 0)
                                 if (total <= 0 || page < 0) null
@@ -1257,7 +1263,7 @@ fun FileListItem(
                 }
             }
 
-            // Star badge — visible when file is a favorite (only when not in selection mode)
+            // Star badge
             if (!isSelectionMode && isFavorite) {
                 Icon(
                     Icons.Filled.Star,
@@ -1273,6 +1279,11 @@ fun FileListItem(
         )
     }
 }
+
+// Video extensions used in FileListItem to decide whether to show the progress bar
+private val videoExtensionsSet = setOf(
+    "mp4", "mkv", "avi", "mov", "wmv", "flv", "webm", "3gp", "m4v", "ts"
+)
 
 @Composable
 fun FileOperationsSheet(

@@ -125,6 +125,19 @@ class MediaViewerActivity : ComponentActivity() {
                         onEnterPip = { enterPipMode() },
                         onVideoPageChanged = { isOnVideoPage = it },
                         onVideoPlayingChanged = { isVideoPlaying = it },
+                        onFileDeleted = { deletedFile ->
+                            val currentList = mediaFiles
+                            val deletedIdx = currentList.indexOfFirst { it.absolutePath == deletedFile.absolutePath }
+                            val newList = currentList.toMutableList().also { it.remove(deletedFile) }
+                            if (newList.isEmpty()) {
+                                finish()
+                            } else {
+                                val newIndex = if (deletedIdx >= newList.size) newList.size - 1 else deletedIdx.coerceAtLeast(0)
+                                mediaFiles = newList
+                                initialIndex = newIndex
+                                screenKey++
+                            }
+                        },
                         onClose = { finish() }
                     )
                 }

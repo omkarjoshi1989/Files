@@ -121,6 +121,21 @@ import androidx.core.content.edit
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Favorite
+import androidx.compose.material.icons.filled.FavoriteBorder
+import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.filled.Slideshow
+import androidx.compose.material.icons.filled.BrightnessLow
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.rememberModalBottomSheetState
+import com.gmail.omkarjoshi1989.util.FavoritesManager
+import com.gmail.omkarjoshi1989.util.RecycleBinManager
 
 @kotlin.OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -133,6 +148,7 @@ fun MediaViewerScreen(
     onEnterPip: () -> Unit = {},
     onVideoPageChanged: (Boolean) -> Unit = {},
     onVideoPlayingChanged: (Boolean) -> Unit = {},
+    onFileDeleted: (File) -> Unit = {},
     onClose: () -> Unit
 ) {
     val context = LocalContext.current
@@ -160,6 +176,15 @@ fun MediaViewerScreen(
     val currentFile = mediaFiles.getOrNull(virtualToActual(pagerState.settledPage))
     val isCurrentFileAudio = currentFile != null && FileUtils.isAudioFile(currentFile)
     var isImmersive by remember { mutableStateOf(false) }
+
+    // ── Image viewer menu state ─────────────────────────────────────────
+    val isCurrentFileImage = currentFile != null && FileUtils.isImageFile(currentFile)
+    var showImageMenu by remember { mutableStateOf(false) }
+    var isFavorite by remember { mutableStateOf(false) }
+    var showDeleteDialog by remember { mutableStateOf(false) }
+    var showBrightnessSheet by remember { mutableStateOf(false) }
+    var slideshowActive by remember { mutableStateOf(false) }
+    val brightnessSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
     // ── Swipe lock: disable left/right swipe when in landscape + video page ──
     val configuration = LocalConfiguration.current
@@ -553,6 +578,33 @@ fun MediaViewerScreen(
         }
     }
 
+    // ── Sync isFavorite when the current image page changes ────────────
+    LaunchedEffect(currentFile) {
+        isFavorite = currentFile
+            ?.takeIf { FileUtils.isImageFile(it) }
+            ?.let { FavoritesManager.isFavorite(context, it.absolutePath) }
+            ?: false
+    }
+
+    // ── Slideshow: auto-advance through image pages in the folder ──────
+    LaunchedEffect(slideshowActive) {
+        if (!slideshowActive) return@LaunchedEffect
+        // Build ordered list of actual page indices that are image files
+        val imageActualIndices = (0 until actualCount).filter { FileUtils.isImageFile(mediaFiles[it]) }
+        if (imageActualIndices.size <= 1) { slideshowActive = false; return@LaunchedEffect }
+        while (slideshowActive) {
+            delay(3_000L)
+            if (!slideshowActive) break
+            val currentActual = virtualToActual(pagerState.currentPage)
+            val idxInSlideshow = imageActualIndices.indexOf(currentActual).let { if (it < 0) 0 else it }
+            val nextActual = imageActualIndices[(idxInSlideshow + 1) % imageActualIndices.size]
+            val nextVirtual = if (loopEnabled && actualCount > 1) {
+                pagerState.currentPage - currentActual + nextActual
+            } else nextActual
+            pagerState.animateScrollToPage(nextVirtual)
+        }
+    }
+
     // ── Control system bars ─────────────────────────────────────────────
     val view = LocalView.current
     val activity = (view.context as? android.app.Activity)
@@ -600,10 +652,10 @@ fun MediaViewerScreen(
             when {
                 FileUtils.isImageFile(file) -> ImagePage(
                     file = file,
-                    brightness = screenBrightness,
-                    onBrightnessChange = { screenBrightness = it.coerceIn(0f, 1f) },
-                    showControls = !isImmersive,
-                    onTap = { isImmersive = !isImmersive }
+                    onTap = {
+                        if (slideshowActive) slideshowActive = false
+                        else isImmersive = !isImmersive
+                    }
                 )
                 FileUtils.isVideoFile(file) -> VideoPage(
                     file = file,
@@ -676,6 +728,79 @@ fun MediaViewerScreen(
                         }
                     }
                 },
+                actions = {
+                    if (isCurrentFileImage && currentFile != null) {
+                        Box {
+                            IconButton(onClick = { showImageMenu = true }) {
+                                Icon(
+                                    imageVector = Icons.Filled.MoreVert,
+                                    contentDescription = "More options",
+                                    tint = Color.White
+                                )
+                            }
+                            DropdownMenu(
+                                expanded = showImageMenu,
+                                onDismissRequest = { showImageMenu = false }
+                            ) {
+                                // ── Favorite toggle ──────────────────────────────
+                                DropdownMenuItem(
+                                    text = { Text(if (isFavorite) "Remove from Favorites" else "Add to Favorites") },
+                                    leadingIcon = {
+                                        if (isFavorite) {
+                                            Icon(Icons.Filled.Favorite, contentDescription = null, tint = Color(0xFFFF9800))
+                                        } else {
+                                            Icon(Icons.Filled.FavoriteBorder, contentDescription = null)
+                                        }
+                                    },
+                                    onClick = {
+                                        showImageMenu = false
+                                        currentFile?.let { file ->
+                                            isFavorite = FavoritesManager.toggleFavorite(context, file.absolutePath)
+                                        }
+                                    }
+                                )
+                                // ── Share ────────────────────────────────────────
+                                DropdownMenuItem(
+                                    text = { Text("Share") },
+                                    leadingIcon = { Icon(Icons.Filled.Share, contentDescription = null) },
+                                    onClick = {
+                                        showImageMenu = false
+                                        currentFile?.let { file ->
+                                            context.startActivity(FileUtils.getShareFileIntent(context, file))
+                                        }
+                                    }
+                                )
+                                // ── Delete ───────────────────────────────────────
+                                DropdownMenuItem(
+                                    text = { Text("Delete") },
+                                    leadingIcon = { Icon(Icons.Filled.Delete, contentDescription = null) },
+                                    onClick = {
+                                        showImageMenu = false
+                                        showDeleteDialog = true
+                                    }
+                                )
+                                // ── Slideshow ────────────────────────────────────
+                                DropdownMenuItem(
+                                    text = { Text(if (slideshowActive) "Stop Slideshow" else "Slideshow") },
+                                    leadingIcon = { Icon(Icons.Filled.Slideshow, contentDescription = null) },
+                                    onClick = {
+                                        showImageMenu = false
+                                        slideshowActive = !slideshowActive
+                                    }
+                                )
+                                // ── Brightness ───────────────────────────────────
+                                DropdownMenuItem(
+                                    text = { Text("Brightness") },
+                                    leadingIcon = { Icon(Icons.Filled.BrightnessHigh, contentDescription = null) },
+                                    onClick = {
+                                        showImageMenu = false
+                                        showBrightnessSheet = true
+                                    }
+                                )
+                            }
+                        }
+                    }
+                },
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = Color.Transparent,
                     titleContentColor = Color.White,
@@ -684,15 +809,128 @@ fun MediaViewerScreen(
                 modifier = Modifier.systemBarsPadding()
             )
         }
+
+        // ── Slideshow active indicator ──────────────────────────────────────
+        AnimatedVisibility(
+            visible = slideshowActive,
+            enter = fadeIn() + slideInVertically(initialOffsetY = { it }),
+            exit = fadeOut() + slideOutVertically(targetOffsetY = { it }),
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .systemBarsPadding()
+                .padding(bottom = 28.dp)
+        ) {
+            Box(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(24.dp))
+                    .background(Color.Black.copy(alpha = 0.72f))
+                    .clickable(
+                        indication = null,
+                        interactionSource = remember { MutableInteractionSource() }
+                    ) { slideshowActive = false }
+                    .padding(horizontal = 20.dp, vertical = 10.dp)
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.Slideshow,
+                        contentDescription = null,
+                        tint = Color.White,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Text(
+                        text = "Slideshow  ·  Tap to stop",
+                        color = Color.White,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Medium
+                    )
+                }
+            }
+        }
+    } // end outer Box
+
+    // ── Delete confirmation dialog ──────────────────────────────────────────
+    if (showDeleteDialog && currentFile != null) {
+        val fileToDelete = currentFile
+        AlertDialog(
+            onDismissRequest = { showDeleteDialog = false },
+            title = { Text("Delete Image?") },
+            text = { Text("Move \"${fileToDelete.name}\" to the Recycle Bin?") },
+            confirmButton = {
+                TextButton(onClick = {
+                    showDeleteDialog = false
+                    RecycleBinManager.moveToRecycleBin(context, fileToDelete)
+                    onFileDeleted(fileToDelete)
+                }) {
+                    Text("Delete", color = Color(0xFFD32F2F))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDeleteDialog = false }) {
+                    Text("Cancel")
+                }
+            }
+        )
+    }
+
+    // ── Brightness bottom-sheet ─────────────────────────────────────────────
+    if (showBrightnessSheet) {
+        ModalBottomSheet(
+            onDismissRequest = { showBrightnessSheet = false },
+            sheetState = brightnessSheetState
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 24.dp)
+                    .padding(bottom = 32.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Text(
+                    text = "Brightness",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Spacer(modifier = Modifier.height(20.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.BrightnessLow,
+                        contentDescription = "Low brightness",
+                        modifier = Modifier.size(22.dp)
+                    )
+                    Slider(
+                        value = screenBrightness.coerceIn(0f, 1f),
+                        onValueChange = { screenBrightness = it.coerceIn(0f, 1f) },
+                        valueRange = 0f..1f,
+                        thumb = {
+                            Box(
+                                modifier = Modifier
+                                    .size(20.dp)
+                                    .background(MaterialTheme.colorScheme.primary, CircleShape)
+                            )
+                        },
+                        modifier = Modifier.weight(1f)
+                    )
+                    Icon(
+                        imageVector = Icons.Filled.BrightnessHigh,
+                        contentDescription = "High brightness",
+                        modifier = Modifier.size(22.dp)
+                    )
+                }
+            }
+        }
     }
 }
 
 @Composable
 private fun ImagePage(
     file: File,
-    brightness: Float,
-    onBrightnessChange: (Float) -> Unit,
-    showControls: Boolean,
     onTap: () -> Unit
 ) {
     Box(
@@ -714,36 +952,6 @@ private fun ImagePage(
             modifier = Modifier.fillMaxSize(),
             contentScale = ContentScale.Fit
         )
-
-        // Brightness slider overlay — shown when controls are visible (not immersive)
-        AnimatedVisibility(
-            visible = showControls,
-            enter = fadeIn(),
-            exit = fadeOut(),
-            modifier = Modifier.fillMaxSize()
-        ) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .systemBarsPadding()
-            ) {
-                VerticalSliderColumn(
-                    icon = {
-                        Icon(
-                            imageVector = Icons.Filled.BrightnessHigh,
-                            contentDescription = "Brightness",
-                            tint = Color.White,
-                            modifier = Modifier.size(24.dp)
-                        )
-                    },
-                    value = brightness,
-                    onValueChange = { onBrightnessChange(it) },
-                    modifier = Modifier
-                        .align(Alignment.CenterEnd)
-                        .padding(end = 12.dp)
-                )
-            }
-        }
     }
 }
 
@@ -1396,6 +1604,7 @@ private fun VideoPage(
     }
 }
 
+@kotlin.OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun VerticalSliderColumn(
     icon: @Composable () -> Unit,
@@ -1420,6 +1629,13 @@ private fun VerticalSliderColumn(
                 value = value.coerceIn(0f, 1f),
                 onValueChange = onValueChange,
                 valueRange = 0f..1f,
+                thumb = {
+                    Box(
+                        modifier = Modifier
+                            .size(20.dp)
+                            .background(MaterialTheme.colorScheme.primary, CircleShape)
+                    )
+                },
                 modifier = Modifier
                     .graphicsLayer { rotationZ = -90f }
                     .requiredSize(width = 220.dp, height = 48.dp)

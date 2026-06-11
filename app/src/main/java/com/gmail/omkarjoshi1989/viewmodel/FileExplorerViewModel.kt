@@ -8,15 +8,15 @@ import android.net.Uri
 import android.os.Build
 import android.os.Environment
 import android.os.FileObserver
-import android.util.LruCache
 import android.webkit.MimeTypeMap
 import androidx.core.content.FileProvider
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.gmail.omkarjoshi1989.model.FileItem
+import com.gmail.omkarjoshi1989.util.DirectoryCacheManager
 import com.gmail.omkarjoshi1989.util.FileOperationNotificationHelper
 import com.gmail.omkarjoshi1989.util.RecycleBinManager
 import com.gmail.omkarjoshi1989.util.SettingsManager
-import com.gmail.omkarjoshi1989.util.ChunkedFileLoader
 import com.gmail.omkarjoshi1989.util.ChunkConfig
 import com.gmail.omkarjoshi1989.model.clearFolderMatchCache
 import kotlinx.coroutines.CancellationException
@@ -94,7 +94,7 @@ private data class NavState(
 
 data class FileExplorerUiState(
     val currentPath: String = Environment.getExternalStorageDirectory().absolutePath,
-    val files: List<File> = emptyList(),
+    val files: List<FileItem> = emptyList(),
     val showHiddenFiles: Boolean = false,
     val clipboard: ClipboardData? = null,
     val isLoading: Boolean = false,
@@ -146,24 +146,12 @@ class FileExplorerViewModel(application: Application) : AndroidViewModel(applica
     private val _unzipProgress = MutableStateFlow<UnzipProgressState?>(null)
     val unzipProgress: StateFlow<UnzipProgressState?> = _unzipProgress.asStateFlow()
 
-    /** Async-loaded file list. Populated on Dispatchers.IO so the UI thread is never blocked. */
-    private val _files = MutableStateFlow<List<File>>(emptyList())
+    /** Async-loaded file list (FileItem carries pre-fetched metadata — zero stat() in UI). */
+    private val _files = MutableStateFlow<List<FileItem>>(emptyList())
 
-    /**
-     * Raw (unfiltered/unsorted) directory listing cache.
-     * Key = "$absolutePath|$showHidden".
-     * Holds up to 30 folder listings so back-navigation and revisits are instant.
-     * Sorted/filtered views are re-derived from this cache on Dispatchers.Default (CPU-only, fast).
-     */
-    private val rawFilesCache = LruCache<String, List<File>>(30)
-
-    private fun rawCacheKey(path: String, showHidden: Boolean) = "$path|$showHidden"
-
-    /** Evicts cache entries for [path] (both hidden-visible variants). */
-    private fun invalidateCacheFor(path: String) {
-        rawFilesCache.remove("$path|true")
-        rawFilesCache.remove("$path|false")
-    }
+    // NOTE: Directory listing cache has been moved to DirectoryCacheManager (app-level singleton).
+    // It provides a two-level memory + disk cache that survives both ViewModel recreation
+    // and full app restarts, so DCIM/Camera with 1 000+ files is always served instantly.
 
     private val prefListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
         if (key == "show_hidden_files") {
@@ -176,7 +164,10 @@ class FileExplorerViewModel(application: Application) : AndroidViewModel(applica
     private var debounceJob: Job? = null
 
     private val observerMask = FileObserver.CREATE or FileObserver.DELETE or
-            FileObserver.MOVED_FROM or FileObserver.MOVED_TO or FileObserver.CLOSE_WRITE
+            FileObserver.MOVED_FROM or FileObserver.MOVED_TO
+            // NOTE: CLOSE_WRITE intentionally omitted — it fires on every camera photo/video
+            // write and would constantly evict the DCIM/Camera cache even though the
+            // directory *listing* hasn't changed.  CREATE handles new files perfectly.
 
     @Suppress("DEPRECATION")
     private fun buildObserver(path: String): FileObserver =
@@ -194,8 +185,19 @@ class FileExplorerViewModel(application: Application) : AndroidViewModel(applica
     private fun onFsEvent() {
         debounceJob?.cancel()
         debounceJob = viewModelScope.launch {
-            delay(300)
-            refreshFiles()
+            // 1 500 ms debounce — prevents spamming reloads when the camera app
+            // rapidly creates multiple shot files (burst mode, etc.)
+            delay(1_500)
+            // Only reload if the directory's lastModified actually changed,
+            // meaning entries were really added / removed.
+            val path = _currentPath.value
+            val hidden = _showHiddenFiles.value
+            val key = DirectoryCacheManager.key(path, hidden)
+            val cached = DirectoryCacheManager.getMemory(key)
+            val currentLastMod = withContext(Dispatchers.IO) { File(path).lastModified() }
+            if (cached == null || currentLastMod != cached.folderLastModified) {
+                refreshFiles()
+            }
         }
     }
 
@@ -278,39 +280,96 @@ class FileExplorerViewModel(application: Application) : AndroidViewModel(applica
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), FileExplorerUiState())
 
     /**
-     * Improved loading strategy — eliminates item reordering during progressive display:
+     * ══════════════════════════════════════════════════════════════════════════
+     *  STALE-WHILE-REVALIDATE loading strategy
+     * ══════════════════════════════════════════════════════════════════════════
      *
-     * Fast path (cache hit):
-     *   Display the cached raw list immediately after applying sort/filter on Dispatchers.Default.
-     *   No disk I/O, no spinner — instant. FileObserver invalidates the cache on any FS change.
+     *  The goal is ZERO loading-indicator experience for any folder the user
+     *  has visited before — including monster folders like DCIM/Camera with
+     *  1 000+ files and 7+ GB of content.
      *
-     * Slow path (cache miss):
-     *   1. Read ALL file metadata from disk in ONE listFiles() call (no double-read).
-     *   2. Cache the raw (unsorted) list immediately.
-     *   3. Sort the ENTIRE list once on Dispatchers.Default.
-     *   4. Display the first [initialBatchSize] files immediately (spinner disappears).
-     *   5. Append subsequent sorted chunks with small delays — because files are
-     *      already in correct order, new chunks APPEND to the bottom and never
-     *      cause already-visible items to jump/reorder.
+     *  ┌─────────────────────────────────────────────────────────────────────┐
+     *  │  Level 0 – Memory cache hit (fastest)                               │
+     *  │    • DirectoryCacheManager.getMemory() — HashMap lookup, <1 µs.    │
+     *  │    • Survives ViewModel recreation within the same process.         │
+     *  │    • Show instantly, no spinner.                                    │
+     *  │    • Background: stat() the directory; if lastModified changed,     │
+     *  │      reload silently (no spinner, list refreshes quietly).          │
+     *  │                                                                     │
+     *  │  Level 1 – Disk cache hit (fast)                                   │
+     *  │    • Sequential file read — vastly cheaper than listFiles() for     │
+     *  │      large folders (no per-file stat() calls).                      │
+     *  │    • Survives app restarts.                                         │
+     *  │    • Promoted to memory, then same stale-check as Level 0.         │
+     *  │                                                                     │
+     *  │  Level 2 – True cache miss (first-ever visit, unavoidable I/O)     │
+     *  │    • Show spinner, call listFiles() once, cache the result,         │
+     *  │      then display in sorted chunks — spinner disappears after        │
+     *  │      the first [initialBatchSize] files are ready.                  │
+     *  │    • This path is only hit ONCE per folder per install.             │
+     *  └─────────────────────────────────────────────────────────────────────┘
+     *
+     *  FileObserver events (CREATE / DELETE / MOVED_*) that signal a real
+     *  directory-structure change call refreshFiles(), which marks the memory
+     *  cache as stale.  The next loadFilesAsync() sees the stale flag and
+     *  automatically triggers a silent background reload.
+     *
+     *  CLOSE_WRITE has been removed from the observer mask so that camera
+     *  apps writing to DCIM/Camera never trigger spurious cache evictions.
      */
     private suspend fun loadFilesAsync(navState: NavState) {
-        val key = rawCacheKey(navState.path, navState.showHidden)
-        val cachedRaw = rawFilesCache.get(key)
+        val key = DirectoryCacheManager.key(navState.path, navState.showHidden)
 
-        // ── Fast path: serve from cache ──────────────────────────────────────────
-        // Covers both normal browsing and active search — no disk I/O at all.
-        // FileObserver (CREATE/DELETE/MOVED/CLOSE_WRITE) evicts the cache whenever
-        // the directory changes, keeping this data fresh.
-        if (cachedRaw != null) {
+        // ── Level 0: Memory cache ───────────────────────────────────────────
+        val memCached = DirectoryCacheManager.getMemory(key)
+        if (memCached != null) {
+            // Show immediately — no spinner, even if the entry is stale
             _files.value = withContext(Dispatchers.Default) {
-                applySearchAndSort(cachedRaw, navState.searchQuery, navState.sortState, navState.showHidden)
+                applySearchAndSort(memCached.files, navState.searchQuery, navState.sortState, navState.showHidden)
+            }
+            _isLoading.value = false
+
+            // Background freshness check: compare directory's lastModified with cached value
+            val stale = memCached.isStale || withContext(Dispatchers.IO) {
+                File(navState.path).lastModified() != memCached.folderLastModified
+            }
+            if (stale) {
+                // Silent background reload — the user sees the old data, list updates quietly
+                try {
+                    reloadSilently(navState, key)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (_: Exception) {
+                    /* Keep showing stale data — better than nothing */
+                }
             }
             return
         }
 
-        // ── Slow path: cache miss — read from disk ───────────────────────────────
-        if (!_isRefreshing.value) _isLoading.value = true
+        // ── Level 1: Disk cache ─────────────────────────────────────────────
+        val diskCached = withContext(Dispatchers.IO) { DirectoryCacheManager.getDisk(key) }
+        if (diskCached != null) {
+            // Promote from disk → show instantly, same stale-check as memory path
+            _files.value = withContext(Dispatchers.Default) {
+                applySearchAndSort(diskCached.files, navState.searchQuery, navState.sortState, navState.showHidden)
+            }
+            _isLoading.value = false
 
+            val stale = diskCached.isStale || withContext(Dispatchers.IO) {
+                File(navState.path).lastModified() != diskCached.folderLastModified
+            }
+            if (stale) {
+                try {
+                    reloadSilently(navState, key)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (_: Exception) { /* Keep showing disk-cached data */ }
+            }
+            return
+        }
+
+        // ── Level 2: True cache miss — first-ever visit ─────────────────────
+        if (!_isRefreshing.value) _isLoading.value = true
         try {
             val directory = File(navState.path)
             loadFilesInChunks(directory, navState, key)
@@ -326,100 +385,129 @@ class FileExplorerViewModel(application: Application) : AndroidViewModel(applica
     }
 
     /**
-     * Reads all files from disk in a single [File.listFiles] call, caches the raw list,
-     * sorts the entire list once, then emits it to the UI in sorted chunks.
+     * Silently reloads the directory from disk and updates [_files] with no spinner.
+     * Called when the cache is stale or [File.lastModified] has changed.
+     */
+    private suspend fun reloadSilently(navState: NavState, key: String) {
+        val directory = File(navState.path)
+        val dirLastModified: Long
+        val rawItems: List<FileItem>
+        withContext(Dispatchers.IO) {
+            dirLastModified = directory.lastModified()
+            rawItems = listRawFileItems(directory, navState.showHidden)
+            DirectoryCacheManager.put(key, rawItems, dirLastModified)
+        }
+        val sorted = withContext(Dispatchers.Default) {
+            applySearchAndSort(rawItems, navState.searchQuery, navState.sortState, navState.showHidden)
+        }
+        _files.value = sorted
+    }
+
+    /**
+     * First-visit loader: reads directory + pre-fetches all file metadata in one IO pass,
+     * stores in [DirectoryCacheManager], then displays in sorted chunks so the spinner
+     * disappears after [ChunkConfig.initialBatchSize] items are ready.
      *
-     * Because every chunk is a slice of the already-sorted list, new chunks simply
-     * append to the bottom — visible items never jump or reorder.
+     * This path is only taken on the **very first visit** to a folder.
+     * Every subsequent visit is served from the two-level cache (zero IO).
      */
     private suspend fun loadFilesInChunks(
         directory: File,
         navState: NavState,
         cacheKey: String
     ) {
-        // 1. Single disk read — no double listFiles() call
-        val rawFiles = withContext(Dispatchers.IO) {
-            listRawFiles(directory, navState.showHidden)
+        val dirLastModified: Long
+        val rawItems: List<FileItem>
+        withContext(Dispatchers.IO) {
+            dirLastModified = directory.lastModified()
+            // listRawFileItems pre-fetches isDirectory, size, lastModified, extension
+            // for each entry — zero IO on main thread or during sort
+            rawItems = listRawFileItems(directory, navState.showHidden)
+            // Cache immediately — subsequent visits (incl. sort/filter changes) are instant
+            DirectoryCacheManager.put(cacheKey, rawItems, dirLastModified)
         }
 
-        // 2. Cache raw (unsorted) list immediately so sort/filter changes are instant
-        rawFilesCache.put(cacheKey, rawFiles)
-
-        // 3. Sort the ENTIRE list once — O(n log n) but CPU-only and very fast
-        //    even for 1 000+ files (< 5 ms on typical Android hardware)
-        val sortedFiles = withContext(Dispatchers.Default) {
+        // Sort is purely in-memory: compares FileItem fields, zero stat() calls
+        val sortedItems = withContext(Dispatchers.Default) {
             val filtered = if (navState.searchQuery.isNotBlank())
-                rawFiles.filter { it.name.contains(navState.searchQuery, ignoreCase = true) }
-            else rawFiles
+                rawItems.filter { it.name.contains(navState.searchQuery, ignoreCase = true) }
+            else rawItems
             filtered.sortedWith(buildComparator(navState.sortState))
         }
 
-        // 4. Display in chunks — all chunks are slices of the sorted list,
-        //    so appending never causes any item to change position
-        if (sortedFiles.size <= chunkConfig.initialBatchSize) {
-            // Small directory: show everything at once, no chunking overhead
-            _files.value = sortedFiles
+        if (sortedItems.size <= chunkConfig.initialBatchSize) {
+            _files.value = sortedItems
             _isLoading.value = false
         } else {
-            // Large directory: show initial batch immediately…
-            val accumulator = sortedFiles.take(chunkConfig.initialBatchSize).toMutableList()
+            // Show first batch → hide spinner → append remaining in sorted order
+            val accumulator = sortedItems.take(chunkConfig.initialBatchSize).toMutableList()
             _files.value = accumulator.toList()
             _isLoading.value = false
             _isLoadingMore.value = true
 
-            // …then append remaining sorted chunks one by one
-            val remainingChunks = sortedFiles.drop(chunkConfig.initialBatchSize)
+            sortedItems.drop(chunkConfig.initialBatchSize)
                 .chunked(chunkConfig.chunkSize)
-
-            remainingChunks.forEachIndexed { index, chunk ->
-                delay(0)                                  // yield for cancellation check
-                if (index > 0) delay(chunkConfig.chunkDelayMs)
-                accumulator.addAll(chunk)
-                _files.value = accumulator.toList()
-            }
+                .forEachIndexed { index, chunk ->
+                    delay(0)                             // cooperative cancellation checkpoint
+                    if (index > 0) delay(chunkConfig.chunkDelayMs)
+                    accumulator.addAll(chunk)
+                    _files.value = accumulator.toList()
+                }
 
             _isLoadingMore.value = false
         }
     }
 
     /**
-     * Builds a [Comparator] for the given [SortState].
-     * Folders always sort before files; within each group the chosen sort key applies.
+     * Builds a zero-IO [Comparator] for [FileItem].
+     *
+     * All comparisons use pre-fetched fields — no stat() calls whatsoever.
+     * Folders always sort before files; the chosen sort key applies within each group.
      */
-    private fun buildComparator(sortState: SortState): Comparator<File> =
-        compareBy<File> { !it.isDirectory }.let { base ->
+    private fun buildComparator(sortState: SortState): Comparator<FileItem> =
+        compareBy<FileItem> { !it.isDirectory }.let { base ->
             when (sortState.option) {
                 FileSortOption.NAME ->
                     if (sortState.ascending) base.thenBy { it.name.lowercase() }
                     else base.thenByDescending { it.name.lowercase() }
                 FileSortOption.DATE ->
-                    if (sortState.ascending) base.thenBy { it.lastModified() }
-                    else base.thenByDescending { it.lastModified() }
+                    if (sortState.ascending) base.thenBy { it.lastModified }
+                    else base.thenByDescending { it.lastModified }
                 FileSortOption.SIZE ->
-                    if (sortState.ascending) base.thenBy { if (it.isDirectory) 0L else it.length() }
-                    else base.thenByDescending { if (it.isDirectory) 0L else it.length() }
+                    if (sortState.ascending) base.thenBy { it.size.coerceAtLeast(0L) }
+                    else base.thenByDescending { it.size.coerceAtLeast(0L) }
                 FileSortOption.TYPE ->
-                    if (sortState.ascending) base.thenBy { it.extension.lowercase() }.thenBy { it.name.lowercase() }
-                    else base.thenByDescending { it.extension.lowercase() }.thenBy { it.name.lowercase() }
+                    if (sortState.ascending) base.thenBy { it.extension }.thenBy { it.name.lowercase() }
+                    else base.thenByDescending { it.extension }.thenBy { it.name.lowercase() }
             }
         }
 
-    /** Heavy IO: reads directory entries from disk and applies the hidden-file filter. */
-    private fun listRawFiles(directory: File, showHidden: Boolean): List<File> {
-        val all = directory.listFiles() ?: return emptyList()
-        return all.filter { showHidden || !it.isHidden }
+    /**
+     * Reads all directory entries from disk, pre-fetching every metadata field.
+     * Must be called on Dispatchers.IO.
+     *
+     * Uses [FileItem.fromFile] which issues a single stat() per entry on API 26+
+     * (via BasicFileAttributes) or three separate stat() calls on API 24–25.
+     * Either way, ALL metadata is read here so the main thread never touches the FS.
+     */
+    private fun listRawFileItems(directory: File, showHidden: Boolean): List<FileItem> {
+        val entries = directory.listFiles() ?: return emptyList()
+        return entries.mapNotNull { file ->
+            val item = FileItem.fromFile(file)   // stat() happens here, on IO thread
+            if (!showHidden && item.isHidden) null else item
+        }
     }
 
-    /** CPU-only: applies search filter and sort (used for cache-hit fast path). */
+    /** CPU-only: applies search filter + sort on pre-fetched FileItem data (zero IO). */
     private fun applySearchAndSort(
-        files: List<File>,
+        items: List<FileItem>,
         searchQuery: String,
         sortState: SortState,
-        showHidden: Boolean
-    ): List<File> {
+        @Suppress("UNUSED_PARAMETER") showHidden: Boolean   // kept for signature parity
+    ): List<FileItem> {
         val filtered = if (searchQuery.isNotBlank())
-            files.filter { it.name.contains(searchQuery, ignoreCase = true) }
-        else files
+            items.filter { it.name.contains(searchQuery, ignoreCase = true) }
+        else items
         return filtered.sortedWith(buildComparator(sortState))
     }
 
@@ -600,7 +688,7 @@ class FileExplorerViewModel(application: Application) : AndroidViewModel(applica
 
     private fun selectedFiles(): List<File> {
         val paths = _selectionState.value.paths
-        return uiState.value.files.filter { it.absolutePath in paths }
+        return uiState.value.files.filter { it.absolutePath in paths }.map { it.file }
     }
 
     // ── Paste ─────────────────────────────────────────────────────────────────
@@ -1013,21 +1101,38 @@ class FileExplorerViewModel(application: Application) : AndroidViewModel(applica
 
     private fun refreshFiles() {
         val currentPath = _currentPath.value
-        // Evict the raw listing cache for this path so the next load reads fresh data from disk
-        invalidateCacheFor(currentPath)
+        // Soft-invalidate: mark the cached listing as stale so the next loadFilesAsync()
+        // shows the old data instantly and then silently reloads in the background.
+        // This means paste/delete/rename never show an 8-10 s spinner for large folders.
+        DirectoryCacheManager.invalidate(currentPath)
         _fileListTrigger.value = System.currentTimeMillis()
     }
 
     fun refresh() {
         viewModelScope.launch {
             _isRefreshing.value = true
-            // Clear collection-type folder match cache so newly added/removed
-            // media files are picked up on the next traversal.
+            // Soft-invalidate: mark stale so the next load shows cached data instantly
+            // then silently reloads.  This prevents an 8-10 s blank screen on pull-to-refresh.
             clearFolderMatchCache()
             refreshFiles()
             delay(300)
             _isRefreshing.value = false
         }
+    }
+
+    /**
+     * Lightweight freshness check called on [Lifecycle.Event.ON_RESUME].
+     *
+     * Re-runs [loadFilesAsync] WITHOUT invalidating the cache.  The stale-while-revalidate
+     * logic will compare [File.lastModified] against the cached value:
+     * • If unchanged  → do nothing (user just returned from viewing a photo, etc.)
+     * • If changed    → silent background reload (new files added by camera, etc.)
+     *
+     * This never shows a spinner — it is purely a background correctness check.
+     */
+    fun requestFreshnessCheck() {
+        // Trigger loadFilesAsync re-run without touching the cache
+        _fileListTrigger.value = System.currentTimeMillis()
     }
 
     // ── Formatting ────────────────────────────────────────────────────────────
