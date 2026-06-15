@@ -72,6 +72,18 @@ object FileUtils {
     }
 
     /**
+     * Returns all image and video files in [folder], sorted by name.
+     * Used when the user wants to swipe through both images and videos together.
+     */
+    fun getVisualMediaFilesInFolder(context: Context, folder: File): List<File> {
+        val showHidden = SettingsManager.isShowHiddenFiles(context)
+        return folder.listFiles()
+            ?.filter { it.isFile && isVisualMediaFile(it) && (showHidden || !it.isHidden) }
+            ?.sortedBy { it.name.lowercase() }
+            ?: emptyList()
+    }
+
+    /**
      * Returns files from [folder] that belong to the same media group as [referenceFile].
      * Images and videos are each kept in their own group so that opening an image
      * only allows swiping through other images (not videos) and vice-versa.
@@ -173,13 +185,13 @@ object FileUtils {
         val queries = listOf(
             Query(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI,
                   MediaStore.Audio.Media.DATA,
-                  MediaStore.Audio.Media.DATE_MODIFIED),
+                  MediaStore.Audio.Media.DATE_ADDED),
             Query(MediaStore.Video.Media.EXTERNAL_CONTENT_URI,
                   MediaStore.Video.Media.DATA,
-                  MediaStore.Video.Media.DATE_MODIFIED),
+                  MediaStore.Video.Media.DATE_ADDED),
             Query(MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
                   MediaStore.Images.Media.DATA,
-                  MediaStore.Images.Media.DATE_MODIFIED),
+                  MediaStore.Images.Media.DATE_ADDED),
         )
 
         for (q in queries) {
@@ -207,13 +219,13 @@ object FileUtils {
         try {
             context.contentResolver.query(
                 MediaStore.Files.getContentUri("external"),
-                arrayOf(MediaStore.Files.FileColumns.DATA, MediaStore.Files.FileColumns.DATE_MODIFIED),
+                arrayOf(MediaStore.Files.FileColumns.DATA, MediaStore.Files.FileColumns.DATE_ADDED),
                 "${MediaStore.Files.FileColumns.MIME_TYPE} = ?",
                 arrayOf("application/pdf"),
-                "${MediaStore.Files.FileColumns.DATE_MODIFIED} DESC"
+                "${MediaStore.Files.FileColumns.DATE_ADDED} DESC"
             )?.use { cursor ->
                 val dataIdx = cursor.getColumnIndex(MediaStore.Files.FileColumns.DATA)
-                val dateIdx = cursor.getColumnIndex(MediaStore.Files.FileColumns.DATE_MODIFIED)
+                val dateIdx = cursor.getColumnIndex(MediaStore.Files.FileColumns.DATE_ADDED)
                 if (dataIdx >= 0 && dateIdx >= 0) {
                     while (cursor.moveToNext()) {
                         val path = cursor.getString(dataIdx) ?: continue

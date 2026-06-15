@@ -15,8 +15,8 @@ android {
         applicationId = "com.gmail.omkarjoshi1989"
         minSdk = 24
         targetSdk = 36
-        versionCode = 260611
-        versionName = "6.11"
+        versionCode = 260615
+        versionName = "6.15"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }

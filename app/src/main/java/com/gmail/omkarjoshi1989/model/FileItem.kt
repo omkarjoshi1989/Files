@@ -44,6 +44,12 @@ data class FileItem(
      */
     val size: Long,
     val lastModified: Long,
+    /**
+     * File creation time in milliseconds since epoch.
+     * On API 26+ this is read from [BasicFileAttributes.creationTime].
+     * On API 24–25 it falls back to [lastModified] (creation time unavailable via File API).
+     */
+    val creationTime: Long,
     /** Lower-case file extension, empty string for directories and extension-less files. */
     val extension: String,
     val isHidden: Boolean
@@ -80,6 +86,7 @@ data class FileItem(
                     isDirectory  = isDir,
                     size         = if (isDir) -1L else attrs.size(),
                     lastModified = attrs.lastModifiedTime().toMillis(),
+                    creationTime = attrs.creationTime().toMillis(),
                     extension    = if (isDir) "" else file.extension.lowercase(),
                     isHidden     = file.name.startsWith(".")
                 )
@@ -98,6 +105,7 @@ data class FileItem(
                 isDirectory  = isDir,
                 size         = if (isDir) -1L else file.length(),  // stat() #2 (files only)
                 lastModified = file.lastModified(),                  // stat() #3
+                creationTime = file.lastModified(),                  // creation time unavailable on API < 26, fall back to lastModified
                 extension    = if (isDir) "" else file.extension.lowercase(),
                 isHidden     = file.name.startsWith(".")
             )

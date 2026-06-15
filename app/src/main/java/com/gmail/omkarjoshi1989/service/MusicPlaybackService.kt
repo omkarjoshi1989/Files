@@ -104,6 +104,10 @@ class MusicPlaybackService : MediaSessionService() {
                 val intent = Intent(this@MusicPlaybackService, MusicPlayerActivity::class.java).apply {
                     putExtra(MusicPlayerActivity.EXTRA_FOLDER_PATH, folderPath)
                     putExtra(MusicPlayerActivity.EXTRA_FILE_PATH, filePath)
+                    // Never auto-play when the user taps the notification — the player
+                    // should open in whatever state the music is already in (playing or
+                    // paused) without forcing playback to start.
+                    putExtra(MusicPlayerActivity.EXTRA_NO_AUTOPLAY, true)
                     flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
                 }
 

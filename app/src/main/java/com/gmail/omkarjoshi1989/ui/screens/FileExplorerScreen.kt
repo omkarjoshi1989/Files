@@ -18,12 +18,17 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.BasicTextField
@@ -67,6 +72,8 @@ import androidx.compose.material.icons.filled.PlayCircle
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.StarBorder
 import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.filled.GridView
+import androidx.compose.material.icons.filled.ViewList
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.BottomAppBar
 import androidx.compose.material3.CircularProgressIndicator
@@ -92,6 +99,9 @@ import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
@@ -112,11 +122,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
@@ -127,14 +139,18 @@ import com.gmail.omkarjoshi1989.model.FileItem
 import com.gmail.omkarjoshi1989.model.folderContainsMatchingFiles
 import com.gmail.omkarjoshi1989.model.matchesFile
 import com.gmail.omkarjoshi1989.ui.components.FileThumbnail
+import com.gmail.omkarjoshi1989.ui.components.FileThumbnailGrid
 import com.gmail.omkarjoshi1989.ui.components.VideoProgressBar
 import com.gmail.omkarjoshi1989.util.FavoritesManager
 import com.gmail.omkarjoshi1989.util.FileUtils
 import com.gmail.omkarjoshi1989.util.MusicResumeManager
 import com.gmail.omkarjoshi1989.viewmodel.ClipboardOperation
+import com.gmail.omkarjoshi1989.viewmodel.DeleteProgressState
 import com.gmail.omkarjoshi1989.viewmodel.FileSortOption
 import com.gmail.omkarjoshi1989.viewmodel.FileExplorerViewModel
+import com.gmail.omkarjoshi1989.viewmodel.PasteProgressState
 import com.gmail.omkarjoshi1989.viewmodel.UnzipProgressState
+import com.gmail.omkarjoshi1989.viewmodel.ViewMode
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -161,6 +177,8 @@ fun FileExplorerScreen(
     val context = LocalContext.current
     val uiState by viewModel.uiState.collectAsState()
     val unzipProgress by viewModel.unzipProgress.collectAsState()
+    val pasteProgress by viewModel.pasteProgress.collectAsState()
+    val deleteProgress by viewModel.deleteProgress.collectAsState()
     val snackbarHostState = remember { SnackbarHostState() }
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     val coroutineScope = rememberCoroutineScope()
@@ -583,6 +601,16 @@ fun FileExplorerScreen(
                                     leadingIcon = { Icon(Icons.Filled.NoteAdd, contentDescription = null) }
                                 )
                             }
+                            // ── Grid / List toggle ────────────────────────────
+                            IconButton(onClick = {
+                                val next = if (uiState.viewMode == ViewMode.LIST) ViewMode.GRID else ViewMode.LIST
+                                viewModel.setViewMode(next)
+                            }) {
+                                Icon(
+                                    if (uiState.viewMode == ViewMode.LIST) Icons.Filled.GridView else Icons.Filled.ViewList,
+                                    contentDescription = if (uiState.viewMode == ViewMode.LIST) "Switch to grid" else "Switch to list"
+                                )
+                            }
                             IconButton(onClick = { showMoreMenu = true }) {
                                 Icon(Icons.Filled.MoreVert, contentDescription = "More options")
                             }
@@ -644,37 +672,69 @@ fun FileExplorerScreen(
                 )
             }
 
-            LazyColumn(modifier = Modifier.fillMaxSize()) {
-                items(displayFiles, key = { it.absolutePath }) { item ->
-                    val isSelected = item.absolutePath in selectedPaths
-                    FileListItem(
-                        item = item,
-                        viewModel = viewModel,
-                        showHiddenFiles = uiState.showHiddenFiles,
-                        isFavorite = item.absolutePath in favoritePaths,
-                        isSelectionMode = isSelectionMode,
-                        isSelected = isSelected,
-                        onSelectionToggle = {
-                            selectedPaths = if (isSelected)
-                                selectedPaths - item.absolutePath
-                            else
-                                selectedPaths + item.absolutePath
-                        },
-                        onClick = {
-                            if (isSelectionMode) {
+            if (uiState.viewMode == ViewMode.GRID) {
+                LazyVerticalGrid(
+                    columns = GridCells.Fixed(3),
+                    modifier = Modifier.fillMaxSize(),
+                    contentPadding = androidx.compose.foundation.layout.PaddingValues(4.dp)
+                ) {
+                    items(displayFiles, key = { it.absolutePath }) { item ->
+                        val isSelected = item.absolutePath in selectedPaths
+                        FileGridItem(
+                            item = item,
+                            isSelectionMode = isSelectionMode,
+                            isSelected = isSelected,
+                            isFavorite = item.absolutePath in favoritePaths,
+                            onClick = {
+                                if (isSelectionMode) {
+                                    selectedPaths = if (isSelected)
+                                        selectedPaths - item.absolutePath
+                                    else
+                                        selectedPaths + item.absolutePath
+                                } else {
+                                    if (item.isDirectory) viewModel.navigateTo(item.absolutePath)
+                                    else onOpenFile(item.file)
+                                }
+                            },
+                            onLongClick = {
+                                selectedPaths = selectedPaths + item.absolutePath
+                            }
+                        )
+                    }
+                }
+            } else {
+                LazyColumn(modifier = Modifier.fillMaxSize()) {
+                    items(displayFiles, key = { it.absolutePath }) { item ->
+                        val isSelected = item.absolutePath in selectedPaths
+                        FileListItem(
+                            item = item,
+                            viewModel = viewModel,
+                            showHiddenFiles = uiState.showHiddenFiles,
+                            isFavorite = item.absolutePath in favoritePaths,
+                            isSelectionMode = isSelectionMode,
+                            isSelected = isSelected,
+                            onSelectionToggle = {
                                 selectedPaths = if (isSelected)
                                     selectedPaths - item.absolutePath
                                 else
                                     selectedPaths + item.absolutePath
-                            } else {
-                                if (item.isDirectory) viewModel.navigateTo(item.absolutePath)
-                                else onOpenFile(item.file)
+                            },
+                            onClick = {
+                                if (isSelectionMode) {
+                                    selectedPaths = if (isSelected)
+                                        selectedPaths - item.absolutePath
+                                    else
+                                        selectedPaths + item.absolutePath
+                                } else {
+                                    if (item.isDirectory) viewModel.navigateTo(item.absolutePath)
+                                    else onOpenFile(item.file)
+                                }
+                            },
+                            onLongClick = {
+                                selectedPaths = selectedPaths + item.absolutePath
                             }
-                        },
-                        onLongClick = {
-                            selectedPaths = selectedPaths + item.absolutePath
-                        }
-                    )
+                        )
+                    }
                 }
             }
         }
@@ -875,6 +935,16 @@ fun FileExplorerScreen(
     unzipProgress?.let { progress ->
         UnzipProgressDialog(progress = progress)
     }
+
+    // ── In-app paste progress overlay ─────────────────────────────────────────
+    pasteProgress?.let { progress ->
+        PasteProgressDialog(progress = progress)
+    }
+
+    // ── In-app delete progress overlay ────────────────────────────────────────
+    deleteProgress?.let { progress ->
+        DeleteProgressDialog(progress = progress)
+    }
 }
 
 @Composable
@@ -980,24 +1050,6 @@ private fun AppNavigationDrawer(
                     label = { Text("Music") },
                     selected = currentCollectionFilter == CollectionType.MUSIC,
                     onClick = { onNavigateToCollection(CollectionType.MUSIC) },
-                    modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding)
-                )
-            }
-            item {
-                NavigationDrawerItem(
-                    icon = { Icon(Icons.Filled.Image, contentDescription = null) },
-                    label = { Text("Images") },
-                    selected = currentCollectionFilter == CollectionType.IMAGES,
-                    onClick = { onNavigateToCollection(CollectionType.IMAGES) },
-                    modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding)
-                )
-            }
-            item {
-                NavigationDrawerItem(
-                    icon = { Icon(Icons.Filled.VideoLibrary, contentDescription = null) },
-                    label = { Text("Videos") },
-                    selected = currentCollectionFilter == CollectionType.VIDEOS,
-                    onClick = { onNavigateToCollection(CollectionType.VIDEOS) },
                     modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding)
                 )
             }
@@ -1128,6 +1180,113 @@ fun BreadcrumbBar(
                     fontWeight = if (index == displaySegments.lastIndex) FontWeight.Bold else FontWeight.Normal,
                     maxLines = 1
                 )
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+fun FileGridItem(
+    item: FileItem,
+    isSelectionMode: Boolean = false,
+    isSelected: Boolean = false,
+    isFavorite: Boolean = false,
+    onClick: () -> Unit,
+    onLongClick: () -> Unit
+) {
+    val selectionColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.35f)
+    Card(
+        modifier = Modifier
+            .padding(3.dp)
+            .fillMaxWidth()
+            .aspectRatio(1f)
+            .alpha(if (item.isHidden) 0.5f else 1f)
+            .combinedClickable(
+                onClick = { if (isSelectionMode) onLongClick() else onClick() },
+                onLongClick = onLongClick
+            ),
+        shape = androidx.compose.foundation.shape.RoundedCornerShape(8.dp),
+        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+    ) {
+        Box(modifier = Modifier.fillMaxSize()) {
+
+            // ── Full-bleed thumbnail ──────────────────────────────────────────
+            FileThumbnailGrid(
+                absolutePath = item.absolutePath,
+                isDirectory  = item.isDirectory,
+                extension    = item.extension,
+                lastModified = item.lastModified,
+                modifier     = Modifier.fillMaxSize()
+            )
+
+            // ── Selection tint overlay ────────────────────────────────────────
+            if (isSelected) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(selectionColor)
+                )
+            }
+
+            // ── Bottom gradient scrim + file name ─────────────────────────────
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .align(Alignment.BottomCenter)
+                    .background(
+                        Brush.verticalGradient(
+                            colors = listOf(Color.Transparent, Color.Black.copy(alpha = 0.72f))
+                        )
+                    )
+                    .padding(horizontal = 4.dp, vertical = 4.dp),
+                contentAlignment = Alignment.BottomStart
+            ) {
+                Text(
+                    text     = item.name,
+                    color    = Color.White,
+                    fontSize = 10.sp,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    lineHeight = 13.sp,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+
+            // ── Favorite star badge (top-end) ─────────────────────────────────
+            if (!isSelectionMode && isFavorite) {
+                Icon(
+                    Icons.Filled.Star,
+                    contentDescription = "Favorite",
+                    tint = Color(0xFFFFC107),
+                    modifier = Modifier
+                        .size(18.dp)
+                        .align(Alignment.TopEnd)
+                        .padding(top = 3.dp, end = 3.dp)
+                )
+            }
+
+            // ── Selection check badge (top-start) ─────────────────────────────
+            if (isSelected) {
+                Box(
+                    modifier = Modifier
+                        .padding(4.dp)
+                        .size(20.dp)
+                        .align(Alignment.TopStart)
+                        .background(
+                            MaterialTheme.colorScheme.primary,
+                            androidx.compose.foundation.shape.CircleShape
+                        ),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        Icons.Filled.Close,
+                        contentDescription = "Selected",
+                        tint = Color.White,
+                        modifier = Modifier.size(14.dp)
+                    )
+                }
             }
         }
     }
@@ -1369,6 +1528,77 @@ fun FileOperationItem(
 }
 
 /**
+ * Non-dismissible in-app overlay shown while a paste (cut/copy) operation is running.
+ * Mirrors the style of [UnzipProgressDialog] for a consistent UX.
+ */
+@Composable
+fun PasteProgressDialog(progress: PasteProgressState) {
+    val fraction = if (progress.total > 0)
+        progress.current.toFloat() / progress.total.toFloat()
+    else 0f
+
+    AlertDialog(
+        onDismissRequest = { /* not dismissible while running */ },
+        title = {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                CircularProgressIndicator(modifier = Modifier.size(22.dp), strokeWidth = 2.5.dp)
+                Text(
+                    text = "${progress.operationVerb}…",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold
+                )
+            }
+        },
+        text = {
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                // Current file name
+                Text(
+                    text = progress.currentFile,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.primary,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+
+                // Progress bar + counters
+                if (progress.total > 1) {
+                    LinearProgressIndicator(
+                        progress = { fraction },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text(
+                            text = "${progress.current} / ${progress.total} files",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Text(
+                            text = "${(fraction * 100).toInt()}%",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                } else {
+                    // Single file — indeterminate since we don't track byte-level progress
+                    LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                }
+            }
+        },
+        // No buttons — dialog auto-dismisses when _pasteProgress becomes null
+        confirmButton = {}
+    )
+}
+
+/**
  * Non-dismissible in-app overlay shown while a ZIP extraction is running.
  * Mirrors the notification-panel progress but displayed right inside the activity.
  */
@@ -1449,6 +1679,81 @@ fun UnzipProgressDialog(progress: UnzipProgressState) {
             }
         },
         // No buttons — dialog auto-dismisses when _unzipProgress becomes null
+        confirmButton = {}
+    )
+}
+
+/**
+ * Non-dismissible in-app overlay shown while files/folders are being moved to the Recycle Bin.
+ * Mirrors the style of [UnzipProgressDialog] and [PasteProgressDialog] for consistent UX.
+ */
+@Composable
+fun DeleteProgressDialog(progress: DeleteProgressState) {
+    val fraction = if (progress.total > 0)
+        progress.current.toFloat() / progress.total.toFloat()
+    else 0f
+
+    AlertDialog(
+        onDismissRequest = { /* not dismissible while running */ },
+        title = {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                CircularProgressIndicator(modifier = Modifier.size(22.dp), strokeWidth = 2.5.dp)
+                Text(
+                    text = "Moving to Recycle Bin…",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold
+                )
+            }
+        },
+        text = {
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                // Current file/folder name
+                Text(
+                    text = progress.currentFile,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.error,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+
+                // Progress bar + counters
+                if (progress.total > 1) {
+                    LinearProgressIndicator(
+                        progress = { fraction },
+                        modifier = Modifier.fillMaxWidth(),
+                        color = MaterialTheme.colorScheme.error
+                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text(
+                            text = "${progress.current} / ${progress.total} items",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Text(
+                            text = "${(fraction * 100).toInt()}%",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                } else {
+                    // Single file/folder — indeterminate (no byte-level tracking)
+                    LinearProgressIndicator(
+                        modifier = Modifier.fillMaxWidth(),
+                        color = MaterialTheme.colorScheme.error
+                    )
+                }
+            }
+        },
+        // No buttons — dialog auto-dismisses when _deleteProgress becomes null
         confirmButton = {}
     )
 }

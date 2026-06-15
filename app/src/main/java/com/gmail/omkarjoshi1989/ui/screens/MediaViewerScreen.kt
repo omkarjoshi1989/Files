@@ -1376,8 +1376,11 @@ private fun VideoPage(
                         // ── Picture in Picture ────────────────────────────────────────
                         popup.menu.add(0, 0, 0, "Picture in Picture")
 
+                        // ── Share ─────────────────────────────────────────────────────
+                        popup.menu.add(0, 500, 1, "Share")
+
                         // ── Playback Speed ────────────────────────────────────────────
-                        popup.menu.add(1, 1, 1, "— Playback Speed —").also { it.isEnabled = false }
+                        popup.menu.add(1, 1, 2, "— Playback Speed —").also { it.isEnabled = false }
                         val speeds = listOf(0.5f, 0.75f, 1f, 1.25f, 1.5f, 2f)
                         popup.menu.setGroupCheckable(2, true, true)
                         speeds.forEachIndexed { idx, speed ->
@@ -1406,6 +1409,14 @@ private fun VideoPage(
                             when {
                                 item.itemId == 0 -> {
                                     onEnterPip()
+                                    true
+                                }
+                                item.itemId == 500 -> {
+                                    try {
+                                        anchorView.context.startActivity(
+                                            FileUtils.getShareFileIntent(anchorView.context, file)
+                                        )
+                                    } catch (_: Exception) {}
                                     true
                                 }
                                 item.itemId in 100..105 -> {

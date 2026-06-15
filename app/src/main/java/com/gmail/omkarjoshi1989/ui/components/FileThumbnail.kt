@@ -3,6 +3,7 @@ package com.gmail.omkarjoshi1989.ui.components
 import android.media.MediaMetadataRetriever
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -285,3 +286,172 @@ private val imageExtensions = setOf(
 private val videoExtensions = setOf(
     "mp4", "mkv", "avi", "mov", "wmv", "flv", "webm", "3gp", "m4v", "ts"
 )
+
+// ── Grid full-bleed thumbnail ─────────────────────────────────────────────────
+
+/**
+ * Grid-mode variant of [FileThumbnail].
+ *
+ * For image, video, and audio-with-album-art files the content is rendered
+ * full-bleed (ContentScale.Crop) so it fills the caller's [modifier] area
+ * completely — no empty padding.
+ *
+ * For directories, audio-without-art and all other file types a coloured
+ * background with a centred icon or extension badge is shown instead.
+ *
+ * Pass [modifier] that sizes the composable (e.g. Modifier.fillMaxSize()).
+ */
+@Composable
+fun FileThumbnailGrid(
+    absolutePath: String,
+    isDirectory: Boolean,
+    extension: String,
+    lastModified: Long,
+    modifier: Modifier = Modifier
+) {
+    when {
+        // ── Folder ────────────────────────────────────────────────────────────
+        isDirectory -> {
+            Box(
+                modifier = modifier.background(MaterialTheme.colorScheme.surfaceVariant),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.Folder,
+                    contentDescription = "Folder",
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.fillMaxSize(0.55f)
+                )
+            }
+        }
+
+        // ── Image ─────────────────────────────────────────────────────────────
+        extension in imageExtensions -> {
+            val placeholder = remember { ColorPainter(Color(0xFFBDBDBD)) }
+            val context = LocalContext.current
+            val imageRequest = remember(absolutePath, lastModified) {
+                ImageRequest.Builder(context)
+                    .data(File(absolutePath))
+                    .diskCachePolicy(CachePolicy.ENABLED)
+                    .memoryCachePolicy(CachePolicy.ENABLED)
+                    .memoryCacheKey("grid_img:$absolutePath:$lastModified")
+                    .diskCacheKey("grid_img:$absolutePath:$lastModified")
+                    .build()
+            }
+            AsyncImage(
+                model = imageRequest,
+                placeholder = placeholder,
+                error = placeholder,
+                contentDescription = null,
+                modifier = modifier,
+                contentScale = ContentScale.Crop
+            )
+        }
+
+        // ── Video ─────────────────────────────────────────────────────────────
+        extension in videoExtensions -> {
+            val placeholder = remember { ColorPainter(Color(0xFF757575)) }
+            val context = LocalContext.current
+            val videoRequest = remember(absolutePath, lastModified) {
+                ImageRequest.Builder(context)
+                    .data(File(absolutePath))
+                    .decoderFactory(VideoFrameDecoder.Factory())
+                    .parameters(
+                        Parameters.Builder()
+                            .set(VideoFrameDecoder.VIDEO_FRAME_MICROS_KEY, 0L)
+                            .build()
+                    )
+                    .diskCachePolicy(CachePolicy.ENABLED)
+                    .memoryCachePolicy(CachePolicy.ENABLED)
+                    .memoryCacheKey("grid_vid:$absolutePath:$lastModified")
+                    .diskCacheKey("grid_vid:$absolutePath:$lastModified")
+                    .build()
+            }
+            AsyncImage(
+                model = videoRequest,
+                placeholder = placeholder,
+                error = placeholder,
+                contentDescription = null,
+                modifier = modifier,
+                contentScale = ContentScale.Crop
+            )
+        }
+
+        // ── Audio ─────────────────────────────────────────────────────────────
+        extension in audioExtensions -> {
+            val context = LocalContext.current
+            val placeholder = remember { ColorPainter(Color(0xFFFF9800)) }
+            val albumArt by produceState<ByteArray?>(
+                initialValue = null,
+                key1 = absolutePath,
+                key2 = lastModified
+            ) {
+                value = withContext(Dispatchers.IO) {
+                    try {
+                        val retriever = MediaMetadataRetriever()
+                        retriever.setDataSource(absolutePath)
+                        val art = retriever.embeddedPicture
+                        retriever.release()
+                        art
+                    } catch (_: Exception) { null }
+                }
+            }
+            if (albumArt != null) {
+                val imageRequest = remember(absolutePath, lastModified) {
+                    ImageRequest.Builder(context)
+                        .data(albumArt)
+                        .diskCachePolicy(CachePolicy.ENABLED)
+                        .memoryCachePolicy(CachePolicy.ENABLED)
+                        .memoryCacheKey("grid_audio:$absolutePath:$lastModified")
+                        .diskCacheKey("grid_audio:$absolutePath:$lastModified")
+                        .build()
+                }
+                AsyncImage(
+                    model = imageRequest,
+                    placeholder = placeholder,
+                    error = placeholder,
+                    contentDescription = null,
+                    modifier = modifier,
+                    contentScale = ContentScale.Crop
+                )
+            } else {
+                // No album art — coloured background + music note icon
+                val bgColor = remember(extension) { getExtensionColor(extension) }
+                Box(
+                    modifier = modifier.background(bgColor),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.MusicNote,
+                        contentDescription = null,
+                        tint = Color.White,
+                        modifier = Modifier.fillMaxSize(0.55f)
+                    )
+                }
+            }
+        }
+
+        // ── Everything else (PDF, APK, ZIP, …) ───────────────────────────────
+        else -> {
+            val displayExt = remember(extension) {
+                if (extension.isNotEmpty()) extension.uppercase() else "FILE"
+            }
+            val bgColor = remember(extension) { getExtensionColor(extension) }
+            Box(
+                modifier = modifier.background(bgColor),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = displayExt,
+                    color = Color.White,
+                    fontSize = 20.sp,
+                    fontWeight = FontWeight.Bold,
+                    textAlign = TextAlign.Center,
+                    maxLines = 1,
+                    overflow = TextOverflow.Clip
+                )
+            }
+        }
+    }
+}
+

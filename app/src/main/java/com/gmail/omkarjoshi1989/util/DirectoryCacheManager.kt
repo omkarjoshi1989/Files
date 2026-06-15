@@ -45,7 +45,7 @@ import java.io.File
  */
 object DirectoryCacheManager {
 
-    private const val DISK_CACHE_DIR = "dirlst_v3"   // bump version when format changes
+    private const val DISK_CACHE_DIR = "dirlst_v4"   // bump version when format changes
 
     // ── Data model ───────────────────────────────────────────────────────────
 
@@ -139,7 +139,7 @@ object DirectoryCacheManager {
 
     /**
      * Format: line 0 = folderLastModified; lines 1..N = TAB-separated FileItem fields.
-     * Fields: absolutePath \t isDirectory \t size \t lastModified \t extension \t isHidden
+     * Fields: absolutePath \t isDirectory \t size \t lastModified \t creationTime \t extension \t isHidden
      */
     private fun writeToDisk(key: String, listing: CachedListing) {
         val file = diskFile(key) ?: return
@@ -155,6 +155,8 @@ object DirectoryCacheManager {
                     w.write(item.size.toString())
                     w.write('\t'.code)
                     w.write(item.lastModified.toString())
+                    w.write('\t'.code)
+                    w.write(item.creationTime.toString())
                     w.write('\t'.code)
                     w.write(item.extension)
                     w.write('\t'.code)
@@ -176,13 +178,14 @@ object DirectoryCacheManager {
             val folderLastModified = lines[0].toLongOrNull() ?: return null
             val items = lines.drop(1).mapNotNull { line ->
                 val parts = line.split('\t')
-                if (parts.size < 6) return@mapNotNull null
-                val absPath  = parts[0]
-                val isDir    = parts[1] == "1"
-                val size     = parts[2].toLongOrNull() ?: return@mapNotNull null
-                val lastMod  = parts[3].toLongOrNull() ?: return@mapNotNull null
-                val ext      = parts[4]
-                val isHidden = parts[5] == "1"
+                if (parts.size < 7) return@mapNotNull null
+                val absPath     = parts[0]
+                val isDir       = parts[1] == "1"
+                val size        = parts[2].toLongOrNull() ?: return@mapNotNull null
+                val lastMod     = parts[3].toLongOrNull() ?: return@mapNotNull null
+                val createTime  = parts[4].toLongOrNull() ?: return@mapNotNull null
+                val ext         = parts[5]
+                val isHidden    = parts[6] == "1"
                 val f = File(absPath)
                 FileItem(
                     file         = f,
@@ -191,6 +194,7 @@ object DirectoryCacheManager {
                     isDirectory  = isDir,
                     size         = size,
                     lastModified = lastMod,
+                    creationTime = createTime,
                     extension    = ext,
                     isHidden     = isHidden
                 )

@@ -45,8 +45,10 @@ import java.util.zip.ZipOutputStream
 enum class ClipboardOperation { CUT, COPY }
 
 enum class FileSortOption(val label: String) {
-    NAME("Name"), DATE("Date Modified"), SIZE("Size"), TYPE("Type")
+    NAME("Name"), DATE("Date Created"), SIZE("Size"), TYPE("Type")
 }
+
+enum class ViewMode { LIST, GRID }
 
 /** Holds one or many files queued for a cut/copy operation. */
 data class ClipboardData(
@@ -72,6 +74,36 @@ data class UnzipProgressState(
     val total: Int,
     val fileIndex: Int  = 0,
     val totalFiles: Int = 1
+)
+
+/**
+ * Live progress state emitted during a paste (cut/copy) operation.
+ * Null when no paste is running.
+ *
+ * @param operationVerb  "Moving" or "Copying"
+ * @param currentFile    name of the file currently being processed
+ * @param current        files processed so far
+ * @param total          total files to process
+ */
+data class PasteProgressState(
+    val operationVerb: String,
+    val currentFile: String,
+    val current: Int,
+    val total: Int
+)
+
+/**
+ * Live progress state emitted while files are being moved to the Recycle Bin.
+ * Null when no delete operation is running.
+ *
+ * @param currentFile  name of the file/folder currently being processed
+ * @param current      items processed so far
+ * @param total        total items to process
+ */
+data class DeleteProgressState(
+    val currentFile: String,
+    val current: Int,
+    val total: Int
 )
 
 private data class SelectionState(
@@ -107,7 +139,8 @@ data class FileExplorerUiState(
     val searchQuery: String = "",
     val isSearchActive: Boolean = false,
     val sortOption: FileSortOption = FileSortOption.NAME,
-    val sortAscending: Boolean = true
+    val sortAscending: Boolean = true,
+    val viewMode: ViewMode = ViewMode.LIST
 )
 
 class FileExplorerViewModel(application: Application) : AndroidViewModel(application) {
@@ -141,10 +174,19 @@ class FileExplorerViewModel(application: Application) : AndroidViewModel(applica
     private val _searchQuery = MutableStateFlow("")
     private val _isSearchActive = MutableStateFlow(false)
     private val _sortState = MutableStateFlow(SortState())
+    private val _viewMode = MutableStateFlow(ViewMode.LIST)
 
     /** Emits live unzip progress; null when no extraction is running. */
     private val _unzipProgress = MutableStateFlow<UnzipProgressState?>(null)
     val unzipProgress: StateFlow<UnzipProgressState?> = _unzipProgress.asStateFlow()
+
+    /** Emits live paste (cut/copy) progress; null when no paste is running. */
+    private val _pasteProgress = MutableStateFlow<PasteProgressState?>(null)
+    val pasteProgress: StateFlow<PasteProgressState?> = _pasteProgress.asStateFlow()
+
+    /** Emits live delete progress; null when no delete operation is running. */
+    private val _deleteProgress = MutableStateFlow<DeleteProgressState?>(null)
+    val deleteProgress: StateFlow<DeleteProgressState?> = _deleteProgress.asStateFlow()
 
     /** Async-loaded file list (FileItem carries pre-fetched metadata — zero stat() in UI). */
     private val _files = MutableStateFlow<List<FileItem>>(emptyList())
@@ -255,11 +297,12 @@ class FileExplorerViewModel(application: Application) : AndroidViewModel(applica
             Triple(Triple(l, lm, r), sel, Unit) 
         },
         combine(_errorMessage, _operationMessage) { err, op -> err to op },
-        _files
-    ) { navState, clipboard, loadingSel, errOp, files ->
+        combine(_files, _viewMode) { files, vm -> files to vm }
+    ) { navState, clipboard, loadingSel, errOp, filesVm ->
         val (loadingStates, selState, _) = loadingSel
         val (loading, loadingMore, refreshing) = loadingStates
         val (error, opMsg) = errOp
+        val (files, viewMode) = filesVm
         FileExplorerUiState(
             currentPath = navState.path,
             files = files,
@@ -275,7 +318,8 @@ class FileExplorerViewModel(application: Application) : AndroidViewModel(applica
             searchQuery = navState.searchQuery,
             isSearchActive = navState.isSearchActive,
             sortOption = navState.sortState.option,
-            sortAscending = navState.sortState.ascending
+            sortAscending = navState.sortState.ascending,
+            viewMode = viewMode
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), FileExplorerUiState())
 
@@ -471,8 +515,8 @@ class FileExplorerViewModel(application: Application) : AndroidViewModel(applica
                     if (sortState.ascending) base.thenBy { it.name.lowercase() }
                     else base.thenByDescending { it.name.lowercase() }
                 FileSortOption.DATE ->
-                    if (sortState.ascending) base.thenBy { it.lastModified }
-                    else base.thenByDescending { it.lastModified }
+                    if (sortState.ascending) base.thenBy { it.creationTime }
+                    else base.thenByDescending { it.creationTime }
                 FileSortOption.SIZE ->
                     if (sortState.ascending) base.thenBy { it.size.coerceAtLeast(0L) }
                     else base.thenByDescending { it.size.coerceAtLeast(0L) }
@@ -618,6 +662,9 @@ class FileExplorerViewModel(application: Application) : AndroidViewModel(applica
             // Default: NAME ascending for folders with no saved preference
             _sortState.value = SortState(FileSortOption.NAME, true)
         }
+        // Load view mode for this folder (default = LIST)
+        val savedMode = SettingsManager.getFolderViewMode(getApplication(), path)
+        _viewMode.value = if (savedMode == "GRID") ViewMode.GRID else ViewMode.LIST
     }
 
     /**
@@ -631,6 +678,12 @@ class FileExplorerViewModel(application: Application) : AndroidViewModel(applica
             currentSort.option.name,
             currentSort.ascending
         )
+    }
+
+    /** Toggles or sets the view mode for the current folder and persists it. */
+    fun setViewMode(mode: ViewMode) {
+        _viewMode.value = mode
+        SettingsManager.saveFolderViewMode(getApplication(), _currentPath.value, mode.name)
     }
 
     // ── Single-file clipboard (bottom sheet) ──────────────────────────────────
@@ -667,12 +720,25 @@ class FileExplorerViewModel(application: Application) : AndroidViewModel(applica
 
     fun deleteSelected() {
         val files = selectedFiles()
+        val total = files.size
         val context = getApplication<Application>()
         viewModelScope.launch {
             _isLoading.value = true
+            _deleteProgress.value = DeleteProgressState(
+                currentFile = "Preparing…",
+                current     = 0,
+                total       = total
+            )
             try {
                 withContext(Dispatchers.IO) {
-                    files.forEach { file -> RecycleBinManager.moveToRecycleBin(context, file) }
+                    files.forEachIndexed { index, file ->
+                        _deleteProgress.value = DeleteProgressState(
+                            currentFile = file.name,
+                            current     = index + 1,
+                            total       = total
+                        )
+                        RecycleBinManager.moveToRecycleBin(context, file)
+                    }
                 }
                 _operationMessage.value = "Moved ${files.size} item(s) to Recycle Bin"
                 clearSelection()
@@ -681,6 +747,7 @@ class FileExplorerViewModel(application: Application) : AndroidViewModel(applica
             } catch (e: Exception) {
                 _errorMessage.value = "Delete failed: ${e.message}"
             } finally {
+                _deleteProgress.value = null
                 _isLoading.value = false
             }
         }
@@ -701,8 +768,19 @@ class FileExplorerViewModel(application: Application) : AndroidViewModel(applica
         val opVerb    = if (isCut) "Moving" else "Copying"
         val doneVerb  = if (isCut) "Moved"  else "Copied"
 
+        // ── Dismiss the clipboard FAB immediately so the bottom UI disappears ──
+        _clipboard.value = null
+
         viewModelScope.launch {
             _isLoading.value = true
+
+            // ── Show paste progress dialog immediately ────────────────────────
+            _pasteProgress.value = PasteProgressState(
+                operationVerb = opVerb,
+                currentFile   = "Preparing…",
+                current       = 0,
+                total         = total
+            )
 
             // ── initial progress notification ────────────────────────────────
             FileOperationNotificationHelper.showProgress(
@@ -717,6 +795,12 @@ class FileExplorerViewModel(application: Application) : AndroidViewModel(applica
                 withContext(Dispatchers.IO) {
                     clipData.files.forEachIndexed { index, sourceFile ->
                         // ── per-file progress update ─────────────────────────
+                        _pasteProgress.value = PasteProgressState(
+                            operationVerb = opVerb,
+                            currentFile   = sourceFile.name,
+                            current       = index + 1,
+                            total         = total
+                        )
                         FileOperationNotificationHelper.showProgress(
                             context,
                             title   = "$opVerb ${if (total == 1) sourceFile.name else "$total items"}",
@@ -749,7 +833,6 @@ class FileExplorerViewModel(application: Application) : AndroidViewModel(applica
                     }
                 }
 
-                _clipboard.value = null
                 val destFolder = File(_currentPath.value).name
                 val completionText = if (total == 1)
                     "${clipData.files[0].name} → $destFolder"
@@ -778,6 +861,7 @@ class FileExplorerViewModel(application: Application) : AndroidViewModel(applica
                 )
                 _errorMessage.value = "Paste failed: $errMsg"
             } finally {
+                _pasteProgress.value = null   // dismiss in-app progress dialog
                 _isLoading.value = false
             }
         }
@@ -805,6 +889,11 @@ class FileExplorerViewModel(application: Application) : AndroidViewModel(applica
         val context = getApplication<Application>()
         viewModelScope.launch {
             _isLoading.value = true
+            _deleteProgress.value = DeleteProgressState(
+                currentFile = file.name,
+                current     = 1,
+                total       = 1
+            )
             try {
                 withContext(Dispatchers.IO) {
                     val success = RecycleBinManager.moveToRecycleBin(context, file)
@@ -815,6 +904,7 @@ class FileExplorerViewModel(application: Application) : AndroidViewModel(applica
             } catch (e: Exception) {
                 _errorMessage.value = "Delete failed: ${e.message}"
             } finally {
+                _deleteProgress.value = null
                 _isLoading.value = false
             }
         }

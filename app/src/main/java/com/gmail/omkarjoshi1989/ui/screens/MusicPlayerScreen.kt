@@ -330,9 +330,13 @@ fun MusicPlayerScreen(
             mc.seekToDefaultPosition(playlistIdx)
             mc.play()                      // ← auto-play on swipe
             playerTrackIndex = playlistIdx
-        } else if (!mc.isPlaying) {
+        } else if (!mc.isPlaying && initialLoadDone) {
             // Same track but paused (e.g. swiped away to image then back,
             // or player reached STATE_IDLE/STATE_ENDED after long idle).
+            // Only resume playback automatically when autoPlay was true (initialLoadDone
+            // starts as autoPlay and is set to true only after the first prepare cycle).
+            // When autoPlay=false (toolbar icon, notification tap on paused music) we
+            // must NOT force the player to start — the user should tap Play themselves.
             when (mc.playbackState) {
                 Player.STATE_IDLE -> { mc.prepare(); mc.play() }
                 Player.STATE_ENDED -> { mc.seekToDefaultPosition(playlistIdx); mc.play() }

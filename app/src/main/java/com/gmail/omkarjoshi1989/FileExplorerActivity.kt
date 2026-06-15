@@ -162,7 +162,7 @@ class FileExplorerActivity : ComponentActivity() {
                             }
                             FileExplorerScreen(
                                 viewModel = fileViewModel,
-                                onOpenFile = { file -> openFile(file) },
+                                onOpenFile = { file -> openFile(file, null) },
                                 onNavigateBack = {
                                     if (!fileViewModel.navigateUp()) {
                                         handleExitBackPress()
@@ -199,7 +199,7 @@ class FileExplorerActivity : ComponentActivity() {
                                 viewModel = collectionViewModel,
                                 collectionFilter = cType,
                                 collectionTitle = cType.displayName,
-                                onOpenFile = { file -> openFile(file) },
+                                onOpenFile = { file -> openFile(file, cType) },
                                 onNavigateBack = {
                                     if (!collectionViewModel.navigateUp()) {
                                         currentScreen = Screen.FILE_EXPLORER
@@ -348,7 +348,7 @@ class FileExplorerActivity : ComponentActivity() {
         }
     }
 
-    private fun openFile(file: java.io.File) {
+    private fun openFile(file: java.io.File, collectionType: CollectionType? = null) {
         if (FileUtils.isZipFile(file)) {
             zipFileToView = file
             currentScreen = Screen.ZIP_VIEWER
@@ -369,13 +369,17 @@ class FileExplorerActivity : ComponentActivity() {
                 }
                 startActivity(intent)
             } else {
-                // Images and videos open in the built-in media viewer
+                // Images and videos open in the built-in media viewer.
+                // Mix images and videos together unless we are inside an Images-only
+                // or Videos-only collection (where swiping should stay within that type).
+                val mixImagesVideos = collectionType == null ||
+                    collectionType == CollectionType.IMAGES_VIDEOS
                 val intent = Intent(this, MediaViewerActivity::class.java).apply {
                     putExtra(MediaViewerActivity.EXTRA_FILE_PATH, file.absolutePath)
                     if (file.parentFile != null) {
-                        // Load all same-type files in the folder
                         putExtra(MediaViewerActivity.EXTRA_FOLDER_PATH, file.parentFile!!.absolutePath)
                     }
+                    putExtra(MediaViewerActivity.EXTRA_MIX_IMAGES_VIDEOS, mixImagesVideos)
                 }
                 startActivity(intent)
             }

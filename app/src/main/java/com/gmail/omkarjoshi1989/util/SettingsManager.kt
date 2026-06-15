@@ -88,4 +88,24 @@ object SettingsManager {
             null // No preference saved, will use default (NAME, ascending)
         }
     }
+
+    /**
+     * Saves the view-mode preference (LIST or GRID) for a specific folder path.
+     * @param folderPath Absolute path of the folder
+     * @param viewMode   "LIST" or "GRID"
+     */
+    fun saveFolderViewMode(context: Context, folderPath: String, viewMode: String) {
+        getFolderSortPrefs(context).edit()
+            .putString("${folderPath}_view_mode", viewMode)
+            .apply()
+    }
+
+    /**
+     * Retrieves the view-mode preference for a specific folder path.
+     * @param folderPath Absolute path of the folder
+     * @return "LIST" or "GRID"; defaults to "LIST" if no preference is saved.
+     */
+    fun getFolderViewMode(context: Context, folderPath: String): String {
+        return getFolderSortPrefs(context).getString("${folderPath}_view_mode", "LIST") ?: "LIST"
+    }
 }

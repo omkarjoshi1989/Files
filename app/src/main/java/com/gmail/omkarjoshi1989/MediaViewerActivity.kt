@@ -17,6 +17,7 @@ import android.util.Rational
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.annotation.RequiresApi
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
@@ -29,6 +30,7 @@ import androidx.media3.common.Player
 import com.gmail.omkarjoshi1989.ui.screens.MediaViewerScreen
 import com.gmail.omkarjoshi1989.ui.theme.FilesTheme
 import com.gmail.omkarjoshi1989.util.FileUtils
+import com.gmail.omkarjoshi1989.util.SettingsManager
 import java.io.File
 
 class MediaViewerActivity : ComponentActivity() {
@@ -40,6 +42,11 @@ class MediaViewerActivity : ComponentActivity() {
         const val EXTRA_SINGLE_FILE_MODE = "single_file_mode"
         /** When true, the music player opens without auto-playing — waits for user to tap play. */
         const val EXTRA_NO_AUTOPLAY = "no_autoplay"
+        /**
+         * When true, swiping includes both images and videos from the same folder
+         * (instead of only files of the same type as the opened file).
+         */
+        const val EXTRA_MIX_IMAGES_VIDEOS = "mix_images_videos"
         private const val NOTIFICATION_PERMISSION_REQUEST_CODE = 100
         private const val ACTION_PIP_CONTROL = "com.gmail.omkarjoshi1989.PIP_CONTROL"
         private const val REQUEST_PIP_CONTROL = 1001
@@ -229,8 +236,12 @@ class MediaViewerActivity : ComponentActivity() {
                 folder.canRead() &&
                 !resolvedFile.absolutePath.startsWith(cacheDir.absolutePath)
             ) {
-                FileUtils.getFilesOfSameType(this, folder, resolvedFile)
+                // Mix images and videos for external intents so the user can swipe
+                // through all visual media in the same folder.
+                val raw = FileUtils.getVisualMediaFilesInFolder(this, folder)
                     .ifEmpty { listOf(resolvedFile) }
+                // Apply the folder's saved sort order (if any)
+                if (folder != null) applySortOrder(raw, folder.absolutePath) else raw
             } else {
                 listOf(resolvedFile)
             }
@@ -248,13 +259,22 @@ class MediaViewerActivity : ComponentActivity() {
         val filePath = intent.getStringExtra(EXTRA_FILE_PATH) ?: return false
         val targetFile = File(filePath)
         val singleFileMode = intent.getBooleanExtra(EXTRA_SINGLE_FILE_MODE, false)
+        val mixImagesVideos = intent.getBooleanExtra(EXTRA_MIX_IMAGES_VIDEOS, false)
 
         val files: List<File> = if (singleFileMode) {
             if (targetFile.exists()) listOf(targetFile) else emptyList()
         } else {
             val folderPath = intent.getStringExtra(EXTRA_FOLDER_PATH) ?: return false
             val folder = File(folderPath)
-            FileUtils.getFilesOfSameType(this, folder, targetFile)
+            val raw = if (mixImagesVideos && (FileUtils.isImageFile(targetFile) || FileUtils.isVideoFile(targetFile))) {
+                // Include both images and videos from the same folder
+                FileUtils.getVisualMediaFilesInFolder(this, folder)
+                    .ifEmpty { FileUtils.getFilesOfSameType(this, folder, targetFile) }
+            } else {
+                FileUtils.getFilesOfSameType(this, folder, targetFile)
+            }
+            // Apply the folder's saved sort order so swipe order matches the folder view
+            applySortOrder(raw, folderPath)
         }
 
         if (files.isEmpty()) return false
@@ -264,6 +284,54 @@ class MediaViewerActivity : ComponentActivity() {
         loopEnabled = true
         autoPlay = !intent.getBooleanExtra(EXTRA_NO_AUTOPLAY, false)
         return true
+    }
+
+    // ── Sort helpers: mirror FileExplorerViewModel.buildComparator() for File objects ──
+
+    /**
+     * Returns the file's creation time in milliseconds.
+     * On API 26+ uses NIO BasicFileAttributes (single stat); falls back to lastModified().
+     */
+    @RequiresApi(Build.VERSION_CODES.O)
+    private fun getCreationTimeNio(file: File): Long = try {
+        java.nio.file.Files.readAttributes(
+            file.toPath(),
+            java.nio.file.attribute.BasicFileAttributes::class.java
+        ).creationTime().toMillis()
+    } catch (_: Exception) {
+        file.lastModified()
+    }
+
+    private fun getCreationTime(file: File): Long =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) getCreationTimeNio(file)
+        else file.lastModified()
+
+    /**
+     * Sorts [files] using the same comparator logic as FileExplorerViewModel,
+     * driven by the folder's saved sort preference from [SettingsManager].
+     * If no preference is saved the list is returned unchanged (already name-sorted).
+     */
+    private fun applySortOrder(files: List<File>, folderPath: String): List<File> {
+        val sortPref = SettingsManager.getFolderSort(this, folderPath) ?: return files
+        val (optionName, ascending) = sortPref
+        return when (optionName) {
+            "NAME" ->
+                if (ascending) files.sortedBy { it.name.lowercase() }
+                else files.sortedByDescending { it.name.lowercase() }
+            "DATE" ->
+                if (ascending) files.sortedBy { getCreationTime(it) }
+                else files.sortedByDescending { getCreationTime(it) }
+            "SIZE" ->
+                if (ascending) files.sortedBy { it.length() }
+                else files.sortedByDescending { it.length() }
+            "TYPE" ->
+                if (ascending)
+                    files.sortedWith(compareBy({ it.extension.lowercase() }, { it.name.lowercase() }))
+                else
+                    files.sortedWith(compareByDescending<File> { it.extension.lowercase() }
+                        .thenBy { it.name.lowercase() })
+            else -> files
+        }
     }
 
     private fun requestNotificationPermissionIfNeeded() {
