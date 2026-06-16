@@ -337,6 +337,21 @@ fun PdfViewerScreen(
 
     // ── Main UI ──────────────────────────────────────────────────────────
     val pageCount = if (isLoaded) openDoc?.pageCount ?: 0 else 0
+    var currentPageNumber by remember(pageCount) {
+        mutableIntStateOf(if (pageCount > 0) 1 else 0)
+    }
+
+    LaunchedEffect(listState, pageCount) {
+        if (pageCount <= 0) {
+            currentPageNumber = 0
+            return@LaunchedEffect
+        }
+        snapshotFlow { listState.firstVisibleItemIndex }
+            .distinctUntilChanged()
+            .collect { firstVisibleIndex ->
+                currentPageNumber = (firstVisibleIndex + 1).coerceIn(1, pageCount)
+            }
+    }
 
     val statusBarPadding  = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
     val navBarPadding     = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
@@ -409,6 +424,7 @@ fun PdfViewerScreen(
             enter   = slideInVertically(initialOffsetY = { -it }) + fadeIn(),
             exit    = slideOutVertically(targetOffsetY = { -it }) + fadeOut()
         ) {
+            val toolbarOverlayColor = Color(0x80424242) // 50% opaque grey
             TopAppBar(
                 title = {
                     Column {
@@ -432,7 +448,7 @@ fun PdfViewerScreen(
                         }
                         if (pageCount > 0) {
                             Text(
-                                text  = if (pageCount == 1) "1 page" else "$pageCount pages",
+                                text  = "$currentPageNumber/$pageCount pages",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = Color.White.copy(alpha = 0.7f)
                             )
@@ -445,8 +461,8 @@ fun PdfViewerScreen(
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor             = Color.Transparent,
-                    scrolledContainerColor     = Color.Transparent,
+                    containerColor             = toolbarOverlayColor,
+                    scrolledContainerColor     = toolbarOverlayColor,
                     titleContentColor          = Color.White,
                     navigationIconContentColor = Color.White
                 ),

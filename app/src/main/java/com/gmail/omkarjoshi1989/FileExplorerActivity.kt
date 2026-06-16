@@ -1,4 +1,4 @@
-package com.gmail.omkarjoshi1989
+﻿package com.gmail.omkarjoshi1989
 
 import android.content.Context
 import android.content.Intent
@@ -38,6 +38,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.gmail.omkarjoshi1989.model.CollectionType
+import com.gmail.omkarjoshi1989.model.SmbConnectionConfig
 import com.gmail.omkarjoshi1989.ui.screens.ApplicationsScreen
 import com.gmail.omkarjoshi1989.ui.screens.FavoritesScreen
 import com.gmail.omkarjoshi1989.ui.screens.FileExplorerScreen
@@ -45,18 +46,21 @@ import com.gmail.omkarjoshi1989.ui.screens.GlobalSearchScreen
 import com.gmail.omkarjoshi1989.ui.screens.PinLockScreen
 import com.gmail.omkarjoshi1989.ui.screens.RecycleBinScreen
 import com.gmail.omkarjoshi1989.ui.screens.SettingsScreen
+import com.gmail.omkarjoshi1989.ui.screens.SmbConnectionDialog
+import com.gmail.omkarjoshi1989.ui.screens.SmbFileExplorerScreen
 import com.gmail.omkarjoshi1989.ui.screens.ZipViewerScreen
 import com.gmail.omkarjoshi1989.ui.theme.FilesTheme
 import com.gmail.omkarjoshi1989.util.FileUtils
 import com.gmail.omkarjoshi1989.util.MusicResumeManager
 import com.gmail.omkarjoshi1989.util.SettingsManager
+import com.gmail.omkarjoshi1989.util.SmbConnectionsManager
 import com.gmail.omkarjoshi1989.util.ThemeMode
 import com.gmail.omkarjoshi1989.service.MusicPlaybackService
 import com.gmail.omkarjoshi1989.viewmodel.FileExplorerViewModel
 import com.gmail.omkarjoshi1989.viewmodel.ZipViewModel
 
 enum class Screen {
-    FILE_EXPLORER, FAVORITES, APPLICATIONS, SETTINGS, ZIP_VIEWER, RECYCLE_BIN, COLLECTION, GLOBAL_SEARCH
+    FILE_EXPLORER, FAVORITES, APPLICATIONS, SETTINGS, ZIP_VIEWER, RECYCLE_BIN, COLLECTION, GLOBAL_SEARCH, SMB_BROWSER
 }
 
 class FileExplorerActivity : ComponentActivity() {
@@ -68,6 +72,9 @@ class FileExplorerActivity : ComponentActivity() {
     private var currentCollection by mutableStateOf<CollectionType?>(null)
     private var themeMode by mutableStateOf(ThemeMode.SYSTEM)
     private var zipFileToView by mutableStateOf<java.io.File?>(null)
+    private var smbConnectionToBrowse by mutableStateOf<SmbConnectionConfig?>(null)
+    private var showSmbDialogGlobal by mutableStateOf(false)
+    private var editingSmbConnectionGlobal by mutableStateOf<SmbConnectionConfig?>(null)
 
     /** Timestamp of the last back-press when at the explorer root (for double-back-to-exit). */
     private var lastBackPressTime = 0L
@@ -178,6 +185,10 @@ class FileExplorerActivity : ComponentActivity() {
                                 },
                                 onNavigateToInternalStorage = null,
                                 onNavigateToGlobalSearch = { currentScreen = Screen.GLOBAL_SEARCH },
+                                onNavigateToSmbConnection = { connection ->
+                                    smbConnectionToBrowse = connection
+                                    currentScreen = Screen.SMB_BROWSER
+                                },
                                 onShowToast = { msg -> Toast.makeText(this, msg, Toast.LENGTH_SHORT).show() }
                             )
                         }
@@ -215,6 +226,10 @@ class FileExplorerActivity : ComponentActivity() {
                                 },
                                 onNavigateToInternalStorage = { currentScreen = Screen.FILE_EXPLORER },
                                 onNavigateToGlobalSearch = { currentScreen = Screen.GLOBAL_SEARCH },
+                                onNavigateToSmbConnection = { connection ->
+                                    smbConnectionToBrowse = connection
+                                    currentScreen = Screen.SMB_BROWSER
+                                },
                                 onShowToast = { msg -> Toast.makeText(this, msg, Toast.LENGTH_SHORT).show() }
                             )
                         }
@@ -278,6 +293,60 @@ class FileExplorerActivity : ComponentActivity() {
                                 },
                                 onNavigateBack = { currentScreen = Screen.FILE_EXPLORER }
                             )
+                        }
+                        Screen.SMB_BROWSER -> {
+                            val connection = smbConnectionToBrowse
+                            if (connection == null) {
+                                currentScreen = Screen.FILE_EXPLORER
+                            } else {
+                                SmbFileExplorerScreen(
+                                    connection = connection,
+                                    onNavigateBack = { currentScreen = Screen.FILE_EXPLORER },
+                                    onOpenFile = { file -> openFile(file, null) },
+                                    onNavigateToFavorites = { currentScreen = Screen.FAVORITES },
+                                    onNavigateToApplications = { currentScreen = Screen.APPLICATIONS },
+                                    onNavigateToSettings = { currentScreen = Screen.SETTINGS },
+                                    onNavigateToRecycleBin = { currentScreen = Screen.RECYCLE_BIN },
+                                    onNavigateToCollection = { type ->
+                                        currentCollection = type
+                                        currentScreen = Screen.COLLECTION
+                                    },
+                                    onNavigateToSmbConnection = { conn ->
+                                        smbConnectionToBrowse = conn
+                                    },
+                                    onAddSmbConnection = {
+                                        editingSmbConnectionGlobal = null
+                                        showSmbDialogGlobal = true
+                                    },
+                                    onEditSmbConnection = { conn ->
+                                        editingSmbConnectionGlobal = conn
+                                        showSmbDialogGlobal = true
+                                    },
+                                    onShowToast = { msg ->
+                                        Toast.makeText(this@FileExplorerActivity, msg, Toast.LENGTH_SHORT).show()
+                                    }
+                                )
+
+                                if (showSmbDialogGlobal) {
+                                    SmbConnectionDialog(
+                                        initialValue = editingSmbConnectionGlobal,
+                                        onDismiss = {
+                                            showSmbDialogGlobal = false
+                                            editingSmbConnectionGlobal = null
+                                        },
+                                        onSave = { config ->
+                                            SmbConnectionsManager.saveConnection(this@FileExplorerActivity, config)
+                                            showSmbDialogGlobal = false
+                                            editingSmbConnectionGlobal = null
+                                        },
+                                        onDelete = { config ->
+                                            SmbConnectionsManager.deleteConnection(this@FileExplorerActivity, config.id)
+                                            showSmbDialogGlobal = false
+                                            editingSmbConnectionGlobal = null
+                                        }
+                                    )
+                                }
+                            }
                         }
                     }
                 } else {
@@ -349,6 +418,9 @@ class FileExplorerActivity : ComponentActivity() {
     }
 
     private fun openFile(file: java.io.File, collectionType: CollectionType? = null) {
+        val isSmbTempFile = file.absolutePath.startsWith(cacheDir.absolutePath) &&
+            (file.name.startsWith("smb_open_") || file.name.startsWith("smb_stream_"))
+
         if (FileUtils.isZipFile(file)) {
             zipFileToView = file
             currentScreen = Screen.ZIP_VIEWER
@@ -363,7 +435,8 @@ class FileExplorerActivity : ComponentActivity() {
                 // Audio files open in the dedicated music player
                 val intent = Intent(this, MusicPlayerActivity::class.java).apply {
                     putExtra(MusicPlayerActivity.EXTRA_FILE_PATH, file.absolutePath)
-                    if (file.parentFile != null) {
+                    putExtra(MusicPlayerActivity.EXTRA_SINGLE_FILE_MODE, isSmbTempFile)
+                    if (!isSmbTempFile && file.parentFile != null) {
                         putExtra(MusicPlayerActivity.EXTRA_FOLDER_PATH, file.parentFile!!.absolutePath)
                     }
                 }
@@ -376,7 +449,8 @@ class FileExplorerActivity : ComponentActivity() {
                     collectionType == CollectionType.IMAGES_VIDEOS
                 val intent = Intent(this, MediaViewerActivity::class.java).apply {
                     putExtra(MediaViewerActivity.EXTRA_FILE_PATH, file.absolutePath)
-                    if (file.parentFile != null) {
+                    putExtra(MediaViewerActivity.EXTRA_SINGLE_FILE_MODE, isSmbTempFile)
+                    if (!isSmbTempFile && file.parentFile != null) {
                         putExtra(MediaViewerActivity.EXTRA_FOLDER_PATH, file.parentFile!!.absolutePath)
                     }
                     putExtra(MediaViewerActivity.EXTRA_MIX_IMAGES_VIDEOS, mixImagesVideos)
@@ -438,3 +512,4 @@ fun PermissionScreen(onRequestPermission: () -> Unit) {
         }
     }
 }
+

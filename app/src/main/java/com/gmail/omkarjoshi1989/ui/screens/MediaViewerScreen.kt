@@ -98,6 +98,7 @@ import androidx.media3.common.Tracks
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.source.ProgressiveMediaSource
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
 import androidx.media3.ui.PlayerView
@@ -136,6 +137,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import com.gmail.omkarjoshi1989.util.FavoritesManager
 import com.gmail.omkarjoshi1989.util.RecycleBinManager
+import com.gmail.omkarjoshi1989.util.SmbSeekableDataSourceFactory
 
 @kotlin.OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -970,6 +972,10 @@ private fun VideoPage(
 ) {
     val context = LocalContext.current
     val mediaUri = remember(file.absolutePath) { android.net.Uri.fromFile(file) }
+    val smbDataSourceFactory = remember { SmbSeekableDataSourceFactory(context) }
+    val mediaSourceFactory = remember(smbDataSourceFactory) {
+        ProgressiveMediaSource.Factory(smbDataSourceFactory)
+    }
 
     val exoPlayer = remember(file.absolutePath) {
         ExoPlayer.Builder(context)
@@ -1027,7 +1033,8 @@ private fun VideoPage(
                     prefs.getLong(file.absolutePath, 0L).coerceAtLeast(0L)
                 } catch (_: Exception) { 0L }
 
-                exoPlayer.setMediaItem(MediaItem.fromUri(mediaUri), startPosition)
+                val mediaSource = mediaSourceFactory.createMediaSource(MediaItem.fromUri(mediaUri))
+                exoPlayer.setMediaSource(mediaSource, startPosition)
                 exoPlayer.prepare()
                 // Reset playback speed for the new file
                 exoPlayer.setPlaybackSpeed(1f)

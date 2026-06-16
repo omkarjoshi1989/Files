@@ -77,6 +77,7 @@ A fully native Android file manager that goes beyond just listing files. It comb
 The hamburger menu (≡) gives you quick access to organized views of your device:
 
 - 💾 **Internal Storage** — browse the full file system with a live storage usage bar (used / total / %)
+- 🌐 **LAN / SMB Connections** — add multiple laptop/PC SMB profiles from the drawer (below Internal Storage), scan nearby devices on the same Wi-Fi, and connect using guest or username/password authentication (SMB2/SMB3)
 - 🎵 **Music** — hierarchical folder-first browser; shows sub-folders (with song count) and audio files inside each folder; tap a folder to drill down; opens the music player when you tap a track
 - 🖼️ **Images** — all image files across the device
 - 🎬 **Videos** — all video files across the device

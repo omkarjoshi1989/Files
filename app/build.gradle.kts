@@ -38,6 +38,11 @@ android {
         compose = true
         buildConfig = true
     }
+    packaging {
+        resources {
+            excludes += "org/bouncycastle/x509/CertPathReviewerMessages*.properties"
+        }
+    }
 }
 
 dependencies {
@@ -59,6 +64,14 @@ dependencies {
     implementation(libs.media3.ui)
     implementation(libs.media3.session)
     implementation(libs.pdfbox.android)
+    implementation(libs.smbj) {
+        exclude(group = "org.bouncycastle", module = "bcprov-jdk18on")
+        exclude(group = "org.bouncycastle", module = "bcpkix-jdk18on")
+        exclude(group = "org.bouncycastle", module = "bcutil-jdk18on")
+    }
+    implementation(libs.jcifs.ng) {
+        exclude(group = "org.bouncycastle", module = "bcprov-jdk18on")
+    }
     testImplementation(libs.junit)
     androidTestImplementation(platform(libs.androidx.compose.bom))
     androidTestImplementation(libs.androidx.compose.ui.test.junit4)

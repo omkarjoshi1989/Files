@@ -65,8 +65,11 @@ import androidx.compose.material.icons.filled.ContentPaste
 import androidx.compose.material.icons.filled.CreateNewFolder
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.DriveFileRenameOutline
+import androidx.compose.material.icons.filled.Dns
 import androidx.compose.material.icons.filled.FolderZip
 import androidx.compose.material.icons.filled.Cloud
+import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Lan
 import androidx.compose.material.icons.filled.NoteAdd
 import androidx.compose.material.icons.filled.PlayCircle
 import androidx.compose.material.icons.filled.Star
@@ -136,6 +139,7 @@ import com.gmail.omkarjoshi1989.MediaViewerActivity
 import com.gmail.omkarjoshi1989.MusicPlayerActivity
 import com.gmail.omkarjoshi1989.model.CollectionType
 import com.gmail.omkarjoshi1989.model.FileItem
+import com.gmail.omkarjoshi1989.model.SmbConnectionConfig
 import com.gmail.omkarjoshi1989.model.folderContainsMatchingFiles
 import com.gmail.omkarjoshi1989.model.matchesFile
 import com.gmail.omkarjoshi1989.ui.components.FileThumbnail
@@ -144,6 +148,7 @@ import com.gmail.omkarjoshi1989.ui.components.VideoProgressBar
 import com.gmail.omkarjoshi1989.util.FavoritesManager
 import com.gmail.omkarjoshi1989.util.FileUtils
 import com.gmail.omkarjoshi1989.util.MusicResumeManager
+import com.gmail.omkarjoshi1989.util.SmbConnectionsManager
 import com.gmail.omkarjoshi1989.viewmodel.ClipboardOperation
 import com.gmail.omkarjoshi1989.viewmodel.DeleteProgressState
 import com.gmail.omkarjoshi1989.viewmodel.FileSortOption
@@ -172,7 +177,8 @@ fun FileExplorerScreen(
     collectionTitle: String? = null,
     onNavigateToCollection: ((CollectionType) -> Unit)? = null,
     onNavigateToInternalStorage: (() -> Unit)? = null,
-    onNavigateToGlobalSearch: (() -> Unit)? = null
+    onNavigateToGlobalSearch: (() -> Unit)? = null,
+    onNavigateToSmbConnection: ((SmbConnectionConfig) -> Unit)? = null
 ) {
     val context = LocalContext.current
     val uiState by viewModel.uiState.collectAsState()
@@ -184,6 +190,9 @@ fun FileExplorerScreen(
     val coroutineScope = rememberCoroutineScope()
 
     var favoritePaths by remember { mutableStateOf(FavoritesManager.getFavorites(context)) }
+    var smbConnections by remember { mutableStateOf(SmbConnectionsManager.getConnections(context)) }
+    var showSmbDialog by remember { mutableStateOf(false) }
+    var editingSmbConnection by remember { mutableStateOf<SmbConnectionConfig?>(null) }
 
     // selectedFile  → file whose bottom-sheet is currently open (single-file ops)
     var selectedFile by remember { mutableStateOf<File?>(null) }
@@ -265,6 +274,7 @@ fun FileExplorerScreen(
                 // spinner previously triggered by returning from the photo viewer.
                 viewModel.requestFreshnessCheck()
                 favoritePaths = FavoritesManager.getFavorites(context)
+                smbConnections = SmbConnectionsManager.getConnections(context)
             }
         }
         lifecycleOwner.lifecycle.addObserver(obs)
@@ -305,6 +315,21 @@ fun FileExplorerScreen(
                 onNavigateToSettings = {
                     coroutineScope.launch { drawerState.close() }
                     onNavigateToSettings()
+                },
+                smbConnections = smbConnections,
+                onAddSmbConnection = {
+                    coroutineScope.launch { drawerState.close() }
+                    editingSmbConnection = null
+                    showSmbDialog = true
+                },
+                onEditSmbConnection = { connection ->
+                    coroutineScope.launch { drawerState.close() }
+                    editingSmbConnection = connection
+                    showSmbDialog = true
+                },
+                onOpenSmbConnection = { connection ->
+                    coroutineScope.launch { drawerState.close() }
+                    onNavigateToSmbConnection?.invoke(connection)
                 }
             )
         }
@@ -985,10 +1010,32 @@ fun FileExplorerScreen(
     deleteProgress?.let { progress ->
         DeleteProgressDialog(progress = progress)
     }
+
+    if (showSmbDialog) {
+        SmbConnectionDialog(
+            initialValue = editingSmbConnection,
+            onDismiss = {
+                showSmbDialog = false
+                editingSmbConnection = null
+            },
+            onSave = { config ->
+                SmbConnectionsManager.saveConnection(context, config)
+                smbConnections = SmbConnectionsManager.getConnections(context)
+                showSmbDialog = false
+                editingSmbConnection = null
+            },
+            onDelete = { config ->
+                SmbConnectionsManager.deleteConnection(context, config.id)
+                smbConnections = SmbConnectionsManager.getConnections(context)
+                showSmbDialog = false
+                editingSmbConnection = null
+            }
+        )
+    }
 }
 
 @Composable
-private fun AppNavigationDrawer(
+internal fun AppNavigationDrawer(
     currentCollectionFilter: CollectionType?,
     onCloseDrawer: () -> Unit,
     onNavigateToInternalStorage: () -> Unit,
@@ -996,7 +1043,11 @@ private fun AppNavigationDrawer(
     onNavigateToApplications: () -> Unit,
     onNavigateToRecycleBin: () -> Unit,
     onNavigateToFavorites: () -> Unit,
-    onNavigateToSettings: () -> Unit
+    onNavigateToSettings: () -> Unit,
+    smbConnections: List<SmbConnectionConfig>,
+    onAddSmbConnection: () -> Unit,
+    onEditSmbConnection: (SmbConnectionConfig) -> Unit,
+    onOpenSmbConnection: (SmbConnectionConfig) -> Unit
 ) {
     val storageStats = remember {
         try {
@@ -1071,6 +1122,44 @@ private fun AppNavigationDrawer(
                     onClick = onNavigateToInternalStorage,
                     modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding)
                 )
+            }
+            item {
+                NavigationDrawerItem(
+                    icon = { Icon(Icons.Filled.Lan, contentDescription = null) },
+                    label = { Text("Add LAN/SMB Connection") },
+                    selected = false,
+                    onClick = onAddSmbConnection,
+                    modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding)
+                )
+            }
+            if (smbConnections.isNotEmpty()) {
+                items(smbConnections, key = { it.id }) { connection ->
+                    NavigationDrawerItem(
+                        icon = { Icon(Icons.Filled.Dns, contentDescription = null) },
+                        label = {
+                            Column {
+                                Text(connection.displayName, style = MaterialTheme.typography.bodyMedium)
+                                Text(
+                                    "${connection.host}:${connection.port}",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        },
+                        selected = false,
+                        onClick = { onOpenSmbConnection(connection) },
+                        badge = {
+                            Icon(
+                                Icons.Filled.Edit,
+                                contentDescription = "Edit SMB connection",
+                                modifier = Modifier
+                                    .size(18.dp)
+                                    .clickable { onEditSmbConnection(connection) }
+                            )
+                        },
+                        modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding)
+                    )
+                }
             }
 
             // ── COLLECTIONS SECTION ──────────────────────────────────────────
