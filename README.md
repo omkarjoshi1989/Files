@@ -31,7 +31,8 @@ A fully native Android file manager that goes beyond just listing files. It comb
 - ⭐ **Favorite star badge** — starred files display a gold star badge right in the file list
 - 🔢 **Paginated loading** — loads 200 items initially, then 150 more per chunk; more items load automatically as you scroll down
 - 🔄 **Pull-to-refresh** — pull down anywhere in a folder to reload its contents instantly
-- 🔃 **File sorting** — ⋮ menu → **Sort by Name / Date Modified / Size / Type**; tap the same option again to toggle ascending ↑ / descending ↓ order; current direction shown with an arrow indicator
+- 🧩 **List / Grid view switcher** — quickly toggle between compact list view and visual grid view from the explorer menus
+- 🔃 **File sorting** — ⋮ menu → **Sort by Name / Date Modified / Date Created / Size / Type**; tap the same option again to toggle ascending ↑ / descending ↓ order; current direction shown with an arrow indicator
 - 📄 **PDF reading progress** — PDF files show an inline reading-progress percentage (e.g. `43%`) in the file list, updated every time you return from the viewer
 - 🎵 **Quick music access** — ▶ button in the top bar reopens the last-played track in the music player without browsing to it manually
 - ⬅️ **Double-back to exit** — pressing back from the root folder shows *"Press back again to exit"*; a second press within 2 seconds closes the app
@@ -47,6 +48,7 @@ A fully native Android file manager that goes beyond just listing files. It comb
 - 📝 **Create new file** — tap ＋ → New File → type a filename with extension → creates an empty file
 - 🗜️ **Zip** — multi-select files/folders → Zip → name your archive → creates a `.zip`
 - 📦 **Unzip** — long-press any `.zip` file → "Unzip here" → extracts contents to the same folder
+- ⏳ **Unzip progress UI** — extraction shows live progress so long unzip tasks stay visible and reliable
 - 🔍 **ZIP Viewer** — tap any `.zip` file to browse its contents in-app without extracting; breadcrumb bar lets you navigate nested folders inside the archive; back button climbs back up through ZIP directories
 
 ### 🔎 Global Search
@@ -107,6 +109,8 @@ The hamburger menu (≡) gives you quick access to organized views of your devic
 - 🔁 **Type-isolated swiping** — images and videos swipe together in a loop; audio files stay in their own group
 - 👆 **Immersive mode** — tap anywhere on screen to toggle the top bar and system bars; animated slide/fade transitions
 - 🔢 **Track counter** — shows current position and total count (e.g., "3 / 12")
+- 🖼️ **Image slideshow mode** — auto-advance images for hands-free browsing
+- ⋮ **Image quick actions menu** — additional image-viewer actions available from the top-bar menu
 
 ---
 

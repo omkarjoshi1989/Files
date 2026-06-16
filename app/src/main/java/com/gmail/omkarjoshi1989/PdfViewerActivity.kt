@@ -10,6 +10,8 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import com.gmail.omkarjoshi1989.ui.screens.PdfViewerScreen
 import com.gmail.omkarjoshi1989.ui.theme.FilesTheme
+import com.gmail.omkarjoshi1989.util.RotationManager
+import com.gmail.omkarjoshi1989.util.SettingsManager
 import java.io.File
 
 /**
@@ -27,9 +29,19 @@ class PdfViewerActivity : ComponentActivity() {
         const val EXTRA_FILE_PATH = "file_path"
     }
 
+    private lateinit var rotationManager: RotationManager
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+
+        // Apply global setting that controls forced rotation in media viewer screens.
+        rotationManager = RotationManager(this)
+        if (SettingsManager.isForceMediaRotationEnabled(this)) {
+            rotationManager.enableAutoRotation()
+        } else {
+            requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+        }
 
         // ── 1. Internal launch via explicit file path ───────────────────
         val filePath = intent?.getStringExtra(EXTRA_FILE_PATH)
@@ -84,6 +96,11 @@ class PdfViewerActivity : ComponentActivity() {
         finish()
     }
 
+    override fun onDestroy() {
+        super.onDestroy()
+        rotationManager.release()
+    }
+
     /** Queries the content resolver for a human-readable file name. */
     private fun resolveDisplayName(uri: Uri): String {
         return try {
@@ -98,3 +115,4 @@ class PdfViewerActivity : ComponentActivity() {
         }
     }
 }
+

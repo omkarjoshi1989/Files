@@ -17,6 +17,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.Headphones
 import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.ScreenRotation
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
@@ -65,6 +66,9 @@ fun SettingsScreen(
     }
     var backgroundPlaybackEnabled by remember {
         mutableStateOf(SettingsManager.isBackgroundPlaybackEnabled(context))
+    }
+    var forceMediaRotationEnabled by remember {
+        mutableStateOf(SettingsManager.isForceMediaRotationEnabled(context))
     }
     var showDisableConfirmation by remember { mutableStateOf(false) }
 
@@ -209,6 +213,44 @@ fun SettingsScreen(
                         }
                     }
                 }
+            }
+            HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
+
+            // Force media rotation in viewer activities
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 14.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.ScreenRotation,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary
+                )
+                Spacer(modifier = Modifier.width(16.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "Force Media Rotation",
+                        style = MaterialTheme.typography.bodyLarge,
+                        fontWeight = FontWeight.Medium
+                    )
+                    Text(
+                        text = if (forceMediaRotationEnabled)
+                            "Image, video, music and PDF viewers rotate by device movement even when system auto-rotate is off"
+                        else
+                            "Viewers follow system screen rotation behavior",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Switch(
+                    checked = forceMediaRotationEnabled,
+                    onCheckedChange = { enabled ->
+                        forceMediaRotationEnabled = enabled
+                        SettingsManager.setForceMediaRotationEnabled(context, enabled)
+                    }
+                )
             }
             HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
 

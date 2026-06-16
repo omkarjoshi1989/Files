@@ -17,6 +17,7 @@ object SettingsManager {
     private const val KEY_SHOW_HIDDEN_FILES = "show_hidden_files"
     private const val KEY_THEME_MODE = "theme_mode"
     private const val KEY_BACKGROUND_PLAYBACK = "video_background_playback"
+    private const val KEY_FORCE_MEDIA_ROTATION = "force_media_rotation"
 
     private fun getPrefs(context: Context): SharedPreferences {
         return context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -57,6 +58,14 @@ object SettingsManager {
 
     fun setBackgroundPlaybackEnabled(context: Context, enabled: Boolean) {
         getPrefs(context).edit().putBoolean(KEY_BACKGROUND_PLAYBACK, enabled).apply()
+    }
+
+    fun isForceMediaRotationEnabled(context: Context): Boolean {
+        return getPrefs(context).getBoolean(KEY_FORCE_MEDIA_ROTATION, true)
+    }
+
+    fun setForceMediaRotationEnabled(context: Context, enabled: Boolean) {
+        getPrefs(context).edit().putBoolean(KEY_FORCE_MEDIA_ROTATION, enabled).apply()
     }
 
     /**

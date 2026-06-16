@@ -551,94 +551,37 @@ fun FileExplorerScreen(
                                 Icon(Icons.Filled.Apps, contentDescription = "Select all")
                             }
                         } else {
-                            // Normal mode actions
-                            // Music button — opens recently played track in the music player
-                            IconButton(onClick = {
-                                val lastFile = MusicResumeManager.getLastFilePath(context)
-                                val lastFolder = MusicResumeManager.getLastFolderPath(context)
-                                if (lastFile != null && lastFolder != null && java.io.File(lastFile).exists()) {
-                                    val intent = Intent(context, MusicPlayerActivity::class.java).apply {
-                                        putExtra(MusicPlayerActivity.EXTRA_FILE_PATH, lastFile)
-                                        putExtra(MusicPlayerActivity.EXTRA_FOLDER_PATH, lastFolder)
-                                        putExtra(MusicPlayerActivity.EXTRA_NO_AUTOPLAY, true)
+                            // Three-dots menu stays in the TopAppBar
+                            Box {
+                                IconButton(onClick = { showMoreMenu = true }) {
+                                    Icon(Icons.Filled.MoreVert, contentDescription = "More options")
+                                }
+                                DropdownMenu(expanded = showMoreMenu, onDismissRequest = { showMoreMenu = false }) {
+                                    if (onNavigateToGlobalSearch != null) {
+                                        DropdownMenuItem(
+                                            text = { Text("Search All Files") },
+                                            onClick = {
+                                                showMoreMenu = false
+                                                onNavigateToGlobalSearch()
+                                            },
+                                            leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) }
+                                        )
+                                        HorizontalDivider()
                                     }
-                                    context.startActivity(intent)
-                                } else {
-                                    onShowToast("No recently played music")
-                                }
-                            }) {
-                                Icon(
-                                    Icons.Filled.PlayCircle,
-                                    contentDescription = "Music",
-                                    tint = MaterialTheme.colorScheme.primary
-                                )
-                            }
-                            // Toggle show/hide hidden files
-                            IconButton(onClick = {
-                                val newValue = !uiState.showHiddenFiles
-                                com.gmail.omkarjoshi1989.util.SettingsManager.setShowHiddenFiles(context, newValue)
-                            }) {
-                                Icon(
-                                    if (uiState.showHiddenFiles) Icons.Filled.Visibility else Icons.Filled.VisibilityOff,
-                                    contentDescription = if (uiState.showHiddenFiles) "Hide hidden files" else "Show hidden files"
-                                )
-                            }
-                            IconButton(onClick = { viewModel.toggleSearch() }) {
-                                Icon(Icons.Filled.Search, contentDescription = "Search")
-                            }
-                            IconButton(onClick = { showAddMenu = true }) {
-                                Icon(Icons.Filled.Add, contentDescription = "Create new")
-                            }
-                            DropdownMenu(expanded = showAddMenu, onDismissRequest = { showAddMenu = false }) {
-                                DropdownMenuItem(
-                                    text = { Text("New Folder") },
-                                    onClick = { createName = ""; showCreateFolderDialog = true; showAddMenu = false },
-                                    leadingIcon = { Icon(Icons.Filled.CreateNewFolder, contentDescription = null) }
-                                )
-                                DropdownMenuItem(
-                                    text = { Text("New File") },
-                                    onClick = { createName = ""; showCreateFileDialog = true; showAddMenu = false },
-                                    leadingIcon = { Icon(Icons.Filled.NoteAdd, contentDescription = null) }
-                                )
-                            }
-                            // ── Grid / List toggle ────────────────────────────
-                            IconButton(onClick = {
-                                val next = if (uiState.viewMode == ViewMode.LIST) ViewMode.GRID else ViewMode.LIST
-                                viewModel.setViewMode(next)
-                            }) {
-                                Icon(
-                                    if (uiState.viewMode == ViewMode.LIST) Icons.Filled.GridView else Icons.Filled.ViewList,
-                                    contentDescription = if (uiState.viewMode == ViewMode.LIST) "Switch to grid" else "Switch to list"
-                                )
-                            }
-                            IconButton(onClick = { showMoreMenu = true }) {
-                                Icon(Icons.Filled.MoreVert, contentDescription = "More options")
-                            }
-                            DropdownMenu(expanded = showMoreMenu, onDismissRequest = { showMoreMenu = false }) {
-                                if (onNavigateToGlobalSearch != null) {
-                                    DropdownMenuItem(
-                                        text = { Text("Search All Files") },
-                                        onClick = {
-                                            showMoreMenu = false
-                                            onNavigateToGlobalSearch()
-                                        },
-                                        leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) }
-                                    )
-                                    HorizontalDivider()
-                                }
-                                FileSortOption.entries.forEach { option ->
-                                    DropdownMenuItem(
-                                        text = { Text("Sort by ${option.label}") },
-                                        onClick = { viewModel.setSortOption(option); showMoreMenu = false },
-                                        leadingIcon = { Icon(Icons.Filled.Sort, contentDescription = null) },
-                                        trailingIcon = {
-                                            if (uiState.sortOption == option) Icon(
-                                                if (uiState.sortAscending) Icons.Filled.ArrowUpward else Icons.Filled.ArrowDownward,
-                                                contentDescription = null,
-                                                modifier = Modifier.size(16.dp)
-                                            )
-                                        }
-                                    )
+                                    FileSortOption.entries.forEach { option ->
+                                        DropdownMenuItem(
+                                            text = { Text("Sort by ${option.label}") },
+                                            onClick = { viewModel.setSortOption(option); showMoreMenu = false },
+                                            leadingIcon = { Icon(Icons.Filled.Sort, contentDescription = null) },
+                                            trailingIcon = {
+                                                if (uiState.sortOption == option) Icon(
+                                                    if (uiState.sortAscending) Icons.Filled.ArrowUpward else Icons.Filled.ArrowDownward,
+                                                    contentDescription = null,
+                                                    modifier = Modifier.size(16.dp)
+                                                )
+                                            }
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -648,6 +591,103 @@ fun FileExplorerScreen(
                         titleContentColor = MaterialTheme.colorScheme.onPrimaryContainer
                     )
                 )
+                // ── Secondary action toolbar (hidden in selection mode) ────────
+                if (!isSelectionMode) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(MaterialTheme.colorScheme.primaryContainer)
+                            .padding(horizontal = 4.dp, vertical = 2.dp),
+                        horizontalArrangement = Arrangement.SpaceEvenly,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        // Music player launcher
+                        IconButton(onClick = {
+                            val lastFile = MusicResumeManager.getLastFilePath(context)
+                            val lastFolder = MusicResumeManager.getLastFolderPath(context)
+                            if (lastFile != null && lastFolder != null && java.io.File(lastFile).exists()) {
+                                val intent = Intent(context, MusicPlayerActivity::class.java).apply {
+                                    putExtra(MusicPlayerActivity.EXTRA_FILE_PATH, lastFile)
+                                    putExtra(MusicPlayerActivity.EXTRA_FOLDER_PATH, lastFolder)
+                                    putExtra(MusicPlayerActivity.EXTRA_NO_AUTOPLAY, true)
+                                }
+                                context.startActivity(intent)
+                            } else {
+                                onShowToast("No recently played music")
+                            }
+                        }) {
+                            Icon(
+                                Icons.Filled.PlayCircle,
+                                contentDescription = "Music",
+                                tint = MaterialTheme.colorScheme.primary
+                            )
+                        }
+
+                        // Show / hide hidden files toggle
+                        IconButton(onClick = {
+                            val newValue = !uiState.showHiddenFiles
+                            com.gmail.omkarjoshi1989.util.SettingsManager.setShowHiddenFiles(context, newValue)
+                        }) {
+                            Icon(
+                                if (uiState.showHiddenFiles) Icons.Filled.Visibility else Icons.Filled.VisibilityOff,
+                                contentDescription = if (uiState.showHiddenFiles) "Hide hidden files" else "Show hidden files"
+                            )
+                        }
+
+                        // Search
+                        IconButton(onClick = { viewModel.toggleSearch() }) {
+                            Icon(
+                                Icons.Filled.Search,
+                                contentDescription = if (uiState.isSearchActive) "Close search" else "Search",
+                                tint = if (uiState.isSearchActive) MaterialTheme.colorScheme.primary
+                                       else MaterialTheme.colorScheme.onPrimaryContainer
+                            )
+                        }
+
+                        // New file / folder
+                        Box {
+                            IconButton(onClick = { showAddMenu = true }) {
+                                Icon(Icons.Filled.Add, contentDescription = "Create new")
+                            }
+                            DropdownMenu(
+                                expanded = showAddMenu,
+                                onDismissRequest = { showAddMenu = false }
+                            ) {
+                                DropdownMenuItem(
+                                    text = { Text("New Folder") },
+                                    onClick = {
+                                        createName = ""
+                                        showCreateFolderDialog = true
+                                        showAddMenu = false
+                                    },
+                                    leadingIcon = { Icon(Icons.Filled.CreateNewFolder, contentDescription = null) }
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("New File") },
+                                    onClick = {
+                                        createName = ""
+                                        showCreateFileDialog = true
+                                        showAddMenu = false
+                                    },
+                                    leadingIcon = { Icon(Icons.Filled.NoteAdd, contentDescription = null) }
+                                )
+                            }
+                        }
+
+                        // List / Grid toggle
+                        IconButton(onClick = {
+                            val next = if (uiState.viewMode == ViewMode.LIST) ViewMode.GRID else ViewMode.LIST
+                            viewModel.setViewMode(next)
+                        }) {
+                            Icon(
+                                if (uiState.viewMode == ViewMode.LIST) Icons.Filled.GridView else Icons.Filled.ViewList,
+                                contentDescription = if (uiState.viewMode == ViewMode.LIST) "Switch to grid" else "Switch to list"
+                            )
+                        }
+                    }
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
+                }
+
                 BreadcrumbBar(
                     currentPath = uiState.currentPath,
                     onPathClick = { selectedPaths = emptySet(); viewModel.navigateTo(it) }

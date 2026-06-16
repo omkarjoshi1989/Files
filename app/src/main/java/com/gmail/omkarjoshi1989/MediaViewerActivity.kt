@@ -30,6 +30,7 @@ import androidx.media3.common.Player
 import com.gmail.omkarjoshi1989.ui.screens.MediaViewerScreen
 import com.gmail.omkarjoshi1989.ui.theme.FilesTheme
 import com.gmail.omkarjoshi1989.util.FileUtils
+import com.gmail.omkarjoshi1989.util.RotationManager
 import com.gmail.omkarjoshi1989.util.SettingsManager
 import java.io.File
 
@@ -64,6 +65,7 @@ class MediaViewerActivity : ComponentActivity() {
     private var loopEnabled by mutableStateOf(false)
     private var autoPlay by mutableStateOf(true)
     private var screenKey by mutableIntStateOf(0)
+    private lateinit var rotationManager: RotationManager
 
     // ── PiP state ────────────────────────────────────────────────────────────
     /** True while the activity is rendered inside the PiP window. */
@@ -90,6 +92,14 @@ class MediaViewerActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         requestNotificationPermissionIfNeeded()
+
+        // Apply global setting that controls forced rotation in media viewer screens.
+        rotationManager = RotationManager(this)
+        if (SettingsManager.isForceMediaRotationEnabled(this)) {
+            rotationManager.enableAutoRotation()
+        } else {
+            requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+        }
 
         // Register PiP broadcast receiver (local — RECEIVER_NOT_EXPORTED on API 33+)
         val pipFilter = IntentFilter(ACTION_PIP_CONTROL)
@@ -154,6 +164,9 @@ class MediaViewerActivity : ComponentActivity() {
 
     override fun onDestroy() {
         super.onDestroy()
+        if (::rotationManager.isInitialized) {
+            rotationManager.release()
+        }
         activePipPlayer = null
         try { unregisterReceiver(pipReceiver) } catch (_: Exception) {}
     }

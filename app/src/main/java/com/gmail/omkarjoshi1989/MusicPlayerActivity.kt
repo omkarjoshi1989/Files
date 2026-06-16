@@ -18,6 +18,8 @@ import androidx.core.content.ContextCompat
 import com.gmail.omkarjoshi1989.ui.screens.MusicPlayerScreen
 import com.gmail.omkarjoshi1989.ui.theme.FilesTheme
 import com.gmail.omkarjoshi1989.util.FileUtils
+import com.gmail.omkarjoshi1989.util.RotationManager
+import com.gmail.omkarjoshi1989.util.SettingsManager
 import java.io.File
 
 /**
@@ -50,11 +52,20 @@ class MusicPlayerActivity : ComponentActivity() {
     // Incremented on every new intent so the Composable tree reinitialises
     // (rememberPagerState picks up the new initialIndex).
     private var screenKey by mutableIntStateOf(0)
+    private lateinit var rotationManager: RotationManager
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         requestNotificationPermissionIfNeeded()
+        
+        // Apply global setting that controls forced rotation in media viewer screens.
+        rotationManager = RotationManager(this)
+        if (SettingsManager.isForceMediaRotationEnabled(this)) {
+            rotationManager.enableAutoRotation()
+        } else {
+            requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+        }
 
         if (!loadFromIntent(intent)) {
             finish(); return
@@ -81,6 +92,11 @@ class MusicPlayerActivity : ComponentActivity() {
                 }
             }
         }
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        rotationManager.release()
     }
 
     private fun loadFromIntent(intent: Intent?): Boolean {
