@@ -89,5 +89,37 @@ class SubtitleSidecarResolverTest {
 
         assertEquals("Movie.EN.SRT", selected)
     }
+
+    @Test
+    fun matches_when_subtitle_name_is_shorter_than_release_video_name() {
+        val candidates = listOf(
+            "Movie Name.en.srt",
+            "other.srt"
+        )
+
+        val selected = SubtitleSidecarResolver.findBestMatchingSrt(
+            videoName = "Movie.Name.2024.1080p.BluRay.x264.mkv",
+            candidates = candidates,
+            nameSelector = { it }
+        )
+
+        assertEquals("Movie Name.en.srt", selected)
+    }
+
+    @Test
+    fun matches_when_names_only_differ_by_separator_style() {
+        val candidates = listOf(
+            "Movie Name 2024.srt",
+            "subtitle2.srt"
+        )
+
+        val selected = SubtitleSidecarResolver.findBestMatchingSrt(
+            videoName = "Movie.Name.2024.2160p.WEB-DL.mkv",
+            candidates = candidates,
+            nameSelector = { it }
+        )
+
+        assertEquals("Movie Name 2024.srt", selected)
+    }
 }
 

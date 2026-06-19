@@ -190,11 +190,24 @@ object SmbClientManager {
         }
     }
 
+    /**
+     * Uploads all files in [clipboardData] to [remoteDirectoryPath] on the given SMB share.
+     *
+     * [onProgress] is invoked after each top-level entry is fully uploaded, with:
+     *   - [current]  — number of entries completed so far (1-based)
+     *   - [total]    — total number of entries to upload
+     *   - [fileName] — name of the entry that was just finished
+     *
+     * On a CUT operation the local source is deleted **only after** it has been
+     * successfully uploaded, so a mid-batch failure leaves already-uploaded-and-deleted
+     * entries on the remote but preserves the remaining local files.
+     */
     suspend fun pasteLocalClipboardToRemote(
         config: SmbConnectionConfig,
         shareName: String,
         remoteDirectoryPath: String,
-        clipboardData: ClipboardData
+        clipboardData: ClipboardData,
+        onProgress: (current: Int, total: Int, fileName: String) -> Unit = { _, _, _ -> }
     ) = withContext(Dispatchers.IO) {
         withSession(config) { session ->
             val share = session.connectShare(shareName)
@@ -205,12 +218,15 @@ object SmbClientManager {
             share.use {
                 val remoteDir = normalizeRemotePath(remoteDirectoryPath)
                 ensureDirectoryExists(share, remoteDir)
-                clipboardData.files.forEach { localFile ->
+                val total = clipboardData.files.size
+                clipboardData.files.forEachIndexed { index, localFile ->
                     val remoteTarget = joinRemotePath(remoteDir, localFile.name)
                     uploadLocalEntry(share, localFile, remoteTarget)
+                    // Delete source only after successful upload (CUT semantics)
                     if (clipboardData.operation == ClipboardOperation.CUT) {
                         if (localFile.isDirectory) localFile.deleteRecursively() else localFile.delete()
                     }
+                    onProgress(index + 1, total, localFile.name)
                 }
             }
         }

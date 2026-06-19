@@ -211,6 +211,8 @@ fun FileExplorerScreen(
     var showCreateFolderDialog by remember { mutableStateOf(false) }
     var showCreateFileDialog by remember { mutableStateOf(false) }
     var createName by remember { mutableStateOf("") }
+    // Dialog to pick the SMB connection when "Send to SMB" is tapped with multiple connections
+    var showSendToSmbDialog by remember { mutableStateOf(false) }
 
     // Converts selectedPaths to File list (used for batch clipboard ops)
     fun selectedFiles(): List<File> = selectedPaths.map { File(it) }
@@ -502,6 +504,27 @@ fun FileExplorerScreen(
                                 if (allFavorite) "Unfavorite" else "Favorite",
                                 style = MaterialTheme.typography.labelSmall
                             )
+                        }
+
+                        // Send to SMB — copies selected files to clipboard then navigates to SMB
+                        if (onNavigateToSmbConnection != null && smbConnections.isNotEmpty()) {
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                modifier = Modifier
+                                    .clickable {
+                                        viewModel.copySelected(selectedFiles())
+                                        selectedPaths = emptySet()
+                                        if (smbConnections.size == 1) {
+                                            onNavigateToSmbConnection(smbConnections.first())
+                                        } else {
+                                            showSendToSmbDialog = true
+                                        }
+                                    }
+                                    .padding(8.dp)
+                            ) {
+                                Icon(Icons.Filled.Lan, contentDescription = "Send to SMB")
+                                Text("Send to SMB", style = MaterialTheme.typography.labelSmall)
+                            }
                         }
                     }
                 }
@@ -917,6 +940,18 @@ fun FileExplorerScreen(
                 }
             )
         }
+    }
+
+    // ── Send to SMB — connection picker ───────────────────────────────────────
+    if (showSendToSmbDialog) {
+        SendToSmbDialog(
+            connections = smbConnections,
+            onDismiss = { showSendToSmbDialog = false },
+            onPick = { conn ->
+                showSendToSmbDialog = false
+                onNavigateToSmbConnection?.invoke(conn)
+            }
+        )
     }
 
     // ── Zip name dialog ───────────────────────────────────────────────────────
@@ -1884,6 +1919,55 @@ fun DeleteProgressDialog(progress: DeleteProgressState) {
         },
         // No buttons — dialog auto-dismisses when _deleteProgress becomes null
         confirmButton = {}
+    )
+}
+
+// ── "Send to SMB" connection picker dialog ────────────────────────────────────
+// Shown when user taps "Send to SMB" with multiple saved SMB connections.
+@Composable
+private fun SendToSmbDialog(
+    connections: List<com.gmail.omkarjoshi1989.model.SmbConnectionConfig>,
+    onDismiss: () -> Unit,
+    onPick: (com.gmail.omkarjoshi1989.model.SmbConnectionConfig) -> Unit
+) {
+    androidx.compose.material3.AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Send to SMB") },
+        text = {
+            Column {
+                Text(
+                    "Choose a connection to upload to:",
+                    style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier.padding(bottom = 8.dp)
+                )
+                connections.forEach { conn ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { onPick(conn) }
+                            .padding(vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        Icon(
+                            Icons.Filled.Lan,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(24.dp)
+                        )
+                        Column {
+                            Text(conn.displayName, style = MaterialTheme.typography.bodyLarge)
+                            Text("${conn.host}:${conn.port}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+                    HorizontalDivider()
+                }
+            }
+        },
+        confirmButton = {},
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cancel") }
+        }
     )
 }
 

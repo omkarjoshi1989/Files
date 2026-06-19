@@ -1,4 +1,8 @@
-﻿package com.gmail.omkarjoshi1989.ui.screens
+
+filepath = r'C:\Users\Admin\AndroidStudioProjects\Files\app\src\main\java\com\gmail\omkarjoshi1989\ui\screens\SmbFileExplorerScreen.kt'
+
+content = '''package com.gmail.omkarjoshi1989.ui.screens
+
 import android.os.Environment
 import android.util.Log
 import androidx.activity.compose.BackHandler
@@ -84,15 +88,16 @@ import com.gmail.omkarjoshi1989.viewmodel.ClipboardRepository
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.io.File
+
 /**
- * Full-featured SMB/LAN file explorer -- same drawer/top-bar style as the local explorer.
+ * Full-featured SMB/LAN file explorer — same drawer/top-bar style as the local explorer.
  *
  * Supported operations:
  *  - Browse shares and directories
  *  - Open files (download to cache, then open with system/in-app viewer)
  *  - Long-press -> select -> Delete / Download / Rename
  *  - Create new folder on the remote share
- *  - Paste local clipboard files to current SMB directory (phone -> laptop)
+ *  - Paste local clipboard files to current SMB directory  (phone -> laptop)
  *  - Breadcrumb navigation bar
  */
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
@@ -114,11 +119,13 @@ fun SmbFileExplorerScreen(
     val largeMediaThresholdBytes = 128L * 1024L * 1024L
     val initialStreamBufferBytes = 16L * 1024L * 1024L
     val maxInitialBufferWaitMs = 20_000L
+
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val snackbarHostState = remember { SnackbarHostState() }
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     var smbConnections by remember { mutableStateOf(SmbConnectionsManager.getConnections(context)) }
+
     var currentShare by remember(connection.id) {
         mutableStateOf(connection.defaultShareName.takeIf { it.isNotBlank() })
     }
@@ -129,15 +136,19 @@ fun SmbFileExplorerScreen(
     var isOperating by remember { mutableStateOf(false) }
     var operationMessage by remember { mutableStateOf<String?>(null) }
     var loadError by remember { mutableStateOf<String?>(null) }
+
     var selectedPaths by remember { mutableStateOf(setOf<String>()) }
     val isSelectionMode = selectedPaths.isNotEmpty()
+
     var showDeleteDialog by remember { mutableStateOf(false) }
     var showRenameDialog by remember { mutableStateOf(false) }
     var renameTarget by remember { mutableStateOf<SmbRemoteItem?>(null) }
     var renameText by remember { mutableStateOf("") }
     var showCreateFolderDialog by remember { mutableStateOf(false) }
     var createFolderName by remember { mutableStateOf("") }
+
     val clipboard by ClipboardRepository.clipboard.collectAsState()
+
     fun refresh() {
         scope.launch {
             isLoading = true; loadError = null
@@ -150,16 +161,20 @@ fun SmbFileExplorerScreen(
             isLoading = false
         }
     }
+
     LaunchedEffect(connection.id, currentShare, currentPath) { refresh() }
     LaunchedEffect(loadError) { loadError?.let { snackbarHostState.showSnackbar(it) } }
+
     fun navigateUp(): Boolean = when {
-        currentPath.isNotBlank() -> { currentPath = currentPath.substringBeforeLast("\\", ""); true }
+        currentPath.isNotBlank() -> { currentPath = currentPath.substringBeforeLast("\\\\", ""); true }
         currentShare != null -> { currentShare = null; currentPath = ""; true }
         else -> false
     }
+
     BackHandler(enabled = isSelectionMode) { selectedPaths = emptySet() }
     BackHandler(enabled = isOperating) {}
     BackHandler(enabled = !isSelectionMode && !isOperating) { if (!navigateUp()) onNavigateBack() }
+
     ModalNavigationDrawer(
         drawerState = drawerState,
         gesturesEnabled = !isSelectionMode,
@@ -172,9 +187,9 @@ fun SmbFileExplorerScreen(
                     scope.launch { drawerState.close() }; onNavigateToCollection?.invoke(type)
                 },
                 onNavigateToApplications = { scope.launch { drawerState.close() }; onNavigateToApplications() },
-                onNavigateToRecycleBin  = { scope.launch { drawerState.close() }; onNavigateToRecycleBin() },
-                onNavigateToFavorites   = { scope.launch { drawerState.close() }; onNavigateToFavorites() },
-                onNavigateToSettings    = { scope.launch { drawerState.close() }; onNavigateToSettings() },
+                onNavigateToRecycleBin = { scope.launch { drawerState.close() }; onNavigateToRecycleBin() },
+                onNavigateToFavorites = { scope.launch { drawerState.close() }; onNavigateToFavorites() },
+                onNavigateToSettings = { scope.launch { drawerState.close() }; onNavigateToSettings() },
                 smbConnections = smbConnections,
                 onAddSmbConnection = {
                     scope.launch { drawerState.close() }
@@ -192,7 +207,8 @@ fun SmbFileExplorerScreen(
     ) {
         Scaffold(
             snackbarHost = { SnackbarHost(snackbarHostState) },
-            // -- Paste FAB: upload local clipboard files to current SMB directory --
+
+            // ── Paste FAB: uploads local clipboard to current SMB directory ───
             floatingActionButton = {
                 val clipData = clipboard
                 if (clipData != null && currentShare != null && !isOperating && !isSelectionMode) {
@@ -246,7 +262,7 @@ fun SmbFileExplorerScreen(
                     }
                 }
             },
-            // -- Bottom bar: selection mode actions --
+
             bottomBar = {
                 if (isSelectionMode) {
                     val selectedItems = entries.filter { it.path in selectedPaths }
@@ -308,7 +324,7 @@ fun SmbFileExplorerScreen(
                     }
                 }
             },
-            // -- Top bar --
+
             topBar = {
                 Column {
                     TopAppBar(
@@ -350,8 +366,7 @@ fun SmbFileExplorerScreen(
                             }
                             if (isSelectionMode) {
                                 IconButton(onClick = {
-                                    selectedPaths = if (selectedPaths.size < entries.size)
-                                        entries.map { it.path }.toSet() else emptySet()
+                                    selectedPaths = if (selectedPaths.size < entries.size) entries.map { it.path }.toSet() else emptySet()
                                 }) {
                                     Icon(Icons.Filled.Apps, contentDescription = "Select all")
                                 }
@@ -386,17 +401,20 @@ fun SmbFileExplorerScreen(
                     isLoading || isOperating -> {
                         CircularProgressIndicator(modifier = Modifier.align(Alignment.Center))
                     }
-                    // -- Share picker --
+
+                    // ── Share picker ──────────────────────────────────────────
                     currentShare == null -> {
                         Column(modifier = Modifier.fillMaxSize()) {
-                            // Clipboard-pending banner: visible before a share is selected
+
+                            // Clipboard-pending banner — visible before a share is selected so the
+                            // user knows files are queued for upload once they navigate in.
                             val pendingClip = clipboard
                             if (pendingClip != null) {
                                 val verb = if (pendingClip.operation == ClipboardOperation.CUT) "move" else "paste"
                                 val label = if (pendingClip.files.size == 1)
-                                    "${pendingClip.files[0].name} ready to $verb -- select a share"
+                                    "${pendingClip.files[0].name} ready to $verb — select a share"
                                 else
-                                    "${pendingClip.files.size} items ready to $verb -- select a share"
+                                    "${pendingClip.files.size} items ready to $verb — select a share"
                                 Row(
                                     modifier = Modifier
                                         .fillMaxWidth()
@@ -423,6 +441,7 @@ fun SmbFileExplorerScreen(
                                 }
                                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
                             }
+
                             if (shares.isEmpty()) {
                                 Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.Center) {
                                     Text(
@@ -452,7 +471,8 @@ fun SmbFileExplorerScreen(
                             }
                         }
                     }
-                    // -- Directory contents --
+
+                    // ── Directory contents ────────────────────────────────────
                     else -> {
                         if (entries.isEmpty()) {
                             Text(
@@ -501,7 +521,8 @@ fun SmbFileExplorerScreen(
                                                                     }.onFailure { Log.w("SmbFileExplorer", "Failed to download SMB subtitle", it) }
                                                                 }
                                                                 onShowToast("Streaming video from SMB with random-seek support")
-                                                                onOpenFile(streamMarkerFile); return@runCatching
+                                                                onOpenFile(streamMarkerFile)
+                                                                return@runCatching
                                                             }
                                                             if (!isLargeAudio) {
                                                                 SmbClientManager.downloadFile(connection, share, item.path, cacheFile)
@@ -509,24 +530,27 @@ fun SmbFileExplorerScreen(
                                                                     val subtitleFile = File(cacheFile.parentFile ?: context.cacheDir, "${cacheFile.nameWithoutExtension}.srt")
                                                                     runCatching {
                                                                         SmbClientManager.downloadFile(connection, share, subtitleItem.path, subtitleFile)
-                                                                        Log.d("SmbSubtitle", "Downloaded sidecar ${subtitleItem.name} for cache ${cacheFile.name}")
+                                                                        Log.d("SmbSubtitle", "Downloaded sidecar ${subtitleItem.name} for cache file ${cacheFile.name}")
                                                                     }.onFailure { Log.w("SmbFileExplorer", "Failed to download SMB subtitle", it) }
                                                                 }
-                                                                onOpenFile(cacheFile); return@runCatching
+                                                                onOpenFile(cacheFile)
+                                                                return@runCatching
                                                             }
                                                             val initialTargetBytes = minOf(initialStreamBufferBytes, item.size.coerceAtLeast(0L))
                                                             val downloadJob = launch { SmbClientManager.downloadFile(connection, share, item.path, cacheFile) }
                                                             val startedAt = System.currentTimeMillis()
-                                                            while (downloadJob.isActive && cacheFile.length() < initialTargetBytes && System.currentTimeMillis() - startedAt < maxInitialBufferWaitMs) { delay(150) }
+                                                            while (downloadJob.isActive && cacheFile.length() < initialTargetBytes && System.currentTimeMillis() - startedAt < maxInitialBufferWaitMs) {
+                                                                delay(150)
+                                                            }
                                                             if (cacheFile.length() > 0L) {
                                                                 onOpenFile(cacheFile)
                                                             } else {
                                                                 downloadJob.join()
-                                                                if (cacheFile.length() > 0L) onOpenFile(cacheFile)
-                                                                else error("Buffered playback could not start")
+                                                                if (cacheFile.length() > 0L) onOpenFile(cacheFile) else error("Buffered playback could not start")
                                                             }
                                                         }.onFailure { onShowToast("Cannot open file: ${it.localizedMessage ?: "Unknown error"}") }
-                                                        operationMessage = null; isOperating = false
+                                                        operationMessage = null
+                                                        isOperating = false
                                                     }
                                                 }
                                             }
@@ -541,7 +565,8 @@ fun SmbFileExplorerScreen(
             }
         }
     } // end ModalNavigationDrawer
-    // -- Delete confirmation dialog --
+
+    // ── Delete confirmation dialog ─────────────────────────────────────────────
     if (showDeleteDialog) {
         val toDelete = entries.filter { it.path in selectedPaths }
         AlertDialog(
@@ -549,8 +574,8 @@ fun SmbFileExplorerScreen(
             title = { Text("Delete") },
             text = {
                 Text(
-                    if (toDelete.size == 1) "Permanently delete \"${toDelete[0].name}\" from the SMB share?\nThis cannot be undone."
-                    else "Permanently delete ${toDelete.size} item(s) from the SMB share?\nThis cannot be undone."
+                    if (toDelete.size == 1) "Permanently delete \\"${toDelete[0].name}\\" from the SMB share?\\nThis cannot be undone."
+                    else "Permanently delete ${toDelete.size} item(s) from the SMB share?\\nThis cannot be undone."
                 )
             },
             confirmButton = {
@@ -559,25 +584,16 @@ fun SmbFileExplorerScreen(
                     val share = currentShare ?: return@TextButton
                     scope.launch {
                         isOperating = true
-                        val failedDeletes = mutableListOf<String>()
+                        var failCount = 0
                         toDelete.forEach { item ->
-                            runCatching {
-                                SmbClientManager.deleteEntry(connection, share, item.path, item.isDirectory)
-                            }.onFailure { err ->
-                                val reason = err.localizedMessage ?: "Unknown SMB error"
-                                failedDeletes += "${item.name}: $reason"
-                            }
+                            runCatching { SmbClientManager.deleteEntry(connection, share, item.path, item.isDirectory) }.onFailure { failCount++ }
                         }
                         selectedPaths = emptySet()
-                        val failCount = failedDeletes.size
-                        val successCount = toDelete.size - failCount
-                        val message = when {
-                            failCount == 0 && toDelete.size == 1 -> "Deleted ${toDelete[0].name}"
-                            failCount == 0 -> "Deleted ${toDelete.size} items"
-                            successCount == 0 -> "Delete failed: ${failedDeletes.first()}"
-                            else -> "Deleted $successCount, failed $failCount (first: ${failedDeletes.first()})"
-                        }
-                        snackbarHostState.showSnackbar(message)
+                        snackbarHostState.showSnackbar(
+                            if (failCount > 0) "$failCount item(s) could not be deleted"
+                            else if (toDelete.size == 1) "Deleted ${toDelete[0].name}"
+                            else "Deleted ${toDelete.size} items"
+                        )
                         refresh(); isOperating = false
                     }
                 }) { Text("Delete", color = MaterialTheme.colorScheme.error) }
@@ -585,7 +601,8 @@ fun SmbFileExplorerScreen(
             dismissButton = { TextButton(onClick = { showDeleteDialog = false }) { Text("Cancel") } }
         )
     }
-    // -- Rename dialog --
+
+    // ── Rename dialog ──────────────────────────────────────────────────────────
     if (showRenameDialog && renameTarget != null) {
         AlertDialog(
             onDismissRequest = { showRenameDialog = false; renameTarget = null },
@@ -612,7 +629,8 @@ fun SmbFileExplorerScreen(
             dismissButton = { TextButton(onClick = { showRenameDialog = false; renameTarget = null }) { Text("Cancel") } }
         )
     }
-    // -- Create folder dialog --
+
+    // ── Create folder dialog ───────────────────────────────────────────────────
     if (showCreateFolderDialog) {
         AlertDialog(
             onDismissRequest = { showCreateFolderDialog = false },
@@ -627,7 +645,7 @@ fun SmbFileExplorerScreen(
                     showCreateFolderDialog = false
                     scope.launch {
                         isOperating = true
-                        val newPath = if (currentPath.isBlank()) createFolderName else "$currentPath\\$createFolderName"
+                        val newPath = if (currentPath.isBlank()) createFolderName else "$currentPath\\\\$createFolderName"
                         runCatching { SmbClientManager.createDirectory(connection, share, newPath); refresh() }
                             .onFailure { snackbarHostState.showSnackbar("Create folder failed: ${it.localizedMessage ?: "Unknown error"}") }
                         isOperating = false
@@ -637,7 +655,8 @@ fun SmbFileExplorerScreen(
             dismissButton = { TextButton(onClick = { showCreateFolderDialog = false }) { Text("Cancel") } }
         )
     }
-    // -- "Please wait" overlay during SMB operations --
+
+    // ── "Please wait" overlay ─────────────────────────────────────────────────
     if (isOperating) {
         AlertDialog(
             onDismissRequest = {},
@@ -652,7 +671,9 @@ fun SmbFileExplorerScreen(
         )
     }
 }
-// -- SMB breadcrumb navigation bar --
+
+// ── SMB breadcrumb navigation bar ─────────────────────────────────────────────
+
 @Composable
 private fun SmbBreadcrumbBar(
     connectionName: String,
@@ -663,7 +684,7 @@ private fun SmbBreadcrumbBar(
     onSegmentClick: (String) -> Unit
 ) {
     val scrollState = rememberScrollState()
-    val segments = if (remotePath.isBlank()) emptyList() else remotePath.split("\\").filter { it.isNotEmpty() }
+    val segments = if (remotePath.isBlank()) emptyList() else remotePath.split("\\\\").filter { it.isNotEmpty() }
     LaunchedEffect(remotePath) { scrollState.animateScrollTo(scrollState.maxValue) }
     Row(modifier = Modifier.fillMaxWidth().horizontalScroll(scrollState).padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
         TextButton(onClick = onConnectionClick) {
@@ -677,14 +698,16 @@ private fun SmbBreadcrumbBar(
         }
         segments.forEachIndexed { index, segment ->
             Text("/", color = MaterialTheme.colorScheme.onSurfaceVariant)
-            val segPath = segments.subList(0, index + 1).joinToString("\\")
+            val segPath = segments.subList(0, index + 1).joinToString("\\\\")
             TextButton(onClick = { onSegmentClick(segPath) }) {
                 Text(text = segment, style = MaterialTheme.typography.bodyMedium, fontWeight = if (index == segments.lastIndex) FontWeight.Bold else FontWeight.Normal, maxLines = 1)
             }
         }
     }
 }
-// -- SMB file list item --
+
+// ── SMB file list item ────────────────────────────────────────────────────────
+
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun SmbFileListItem(
@@ -722,3 +745,10 @@ private fun SmbFileListItem(
         HorizontalDivider(modifier = Modifier.padding(start = 68.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
     }
 }
+'''
+
+with open(filepath, 'w', encoding='utf-8') as f:
+    f.write(content)
+
+print('Written', len(content), 'chars to', filepath)
+

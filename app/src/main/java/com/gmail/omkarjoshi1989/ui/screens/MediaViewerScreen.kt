@@ -118,6 +118,7 @@ import com.google.common.util.concurrent.MoreExecutors
 import kotlinx.coroutines.delay
 import java.io.File
 import android.content.Context
+import android.util.Log
 import androidx.compose.foundation.layout.width
 import androidx.core.content.edit
 import androidx.lifecycle.Lifecycle
@@ -964,11 +965,29 @@ private fun findLocalSubtitleFile(videoFile: File): File? {
     val subtitleFiles = parent.listFiles()
         ?.filter { it.isFile }
         ?: return null
-    return SubtitleSidecarResolver.findBestMatchingSrt(
+
+    val exactBasename = subtitleFiles.firstOrNull {
+        it.extension.equals("srt", ignoreCase = true) &&
+            it.nameWithoutExtension.equals(videoFile.nameWithoutExtension, ignoreCase = true)
+    }
+    if (exactBasename != null) {
+        if (videoFile.name.startsWith("smb_open_") || videoFile.name.startsWith("smb_stream_")) {
+            Log.d("MediaViewerSubtitle", "Picked exact basename sidecar ${exactBasename.name} for ${videoFile.name}")
+        }
+        return exactBasename
+    }
+
+    val selected = SubtitleSidecarResolver.findBestMatchingSrt(
         videoName = videoFile.name,
         candidates = subtitleFiles,
         nameSelector = { it.name }
     )
+
+    if (videoFile.name.startsWith("smb_open_") || videoFile.name.startsWith("smb_stream_")) {
+        val srtNames = subtitleFiles.filter { it.extension.equals("srt", ignoreCase = true) }.map { it.name }
+        Log.d("MediaViewerSubtitle", "Resolver selected=${selected?.name ?: "<none>"} video=${videoFile.name} candidates=$srtNames")
+    }
+    return selected
 }
 
 private fun inferVideoMimeType(file: File): String? {
