@@ -122,6 +122,7 @@ The hamburger menu (≡) gives you quick access to organized views of your devic
 - ⏩ **Double-tap seek** — double-tap the left half to rewind 10 seconds; double-tap the right half to fast-forward 10 seconds
 - ⚡ **Long-press speed boost** — hold anywhere on the video to play at 1.5× speed; release to return to normal speed
 - 💾 **Resume playback** — automatically remembers where you stopped in every video file and resumes from that exact position next time you open it
+- 📝 **Auto sidecar subtitles** — automatically loads nearby `.srt` subtitles (including SMB folders) when opening a video
 - 🔒 **Landscape swipe lock** — horizontal swiping between videos is disabled in landscape mode to prevent accidental track changes while watching
 - 🎙️ **Background video audio** — optional setting to keep video audio playing when the app goes to background
 

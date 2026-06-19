@@ -1,6 +1,7 @@
 ﻿package com.gmail.omkarjoshi1989.ui.screens
 
 import android.os.Environment
+import android.util.Log
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
@@ -77,6 +78,7 @@ import com.gmail.omkarjoshi1989.util.FileUtils
 import com.gmail.omkarjoshi1989.util.SmbClientManager
 import com.gmail.omkarjoshi1989.util.SmbConnectionsManager
 import com.gmail.omkarjoshi1989.util.SmbStreamRegistry
+import com.gmail.omkarjoshi1989.util.SubtitleSidecarResolver
 import com.gmail.omkarjoshi1989.viewmodel.ClipboardOperation
 import com.gmail.omkarjoshi1989.viewmodel.ClipboardRepository
 import kotlinx.coroutines.delay
@@ -587,6 +589,15 @@ fun SmbFileExplorerScreen(
                                                         runCatching {
                                                             val cacheFile = File(context.cacheDir, "smb_open_${item.name}")
                                                             val mediaTypeProbe = File(item.name)
+                                                            val subtitleCandidate = if (FileUtils.isVideoFile(mediaTypeProbe)) {
+                                                                SubtitleSidecarResolver.findBestMatchingSrt(
+                                                                    videoName = item.name,
+                                                                    candidates = entries.filter { !it.isDirectory },
+                                                                    nameSelector = { it.name }
+                                                                )
+                                                            } else {
+                                                                null
+                                                            }
                                                             val isLargeMedia = item.size >= largeMediaThresholdBytes
                                                             val isLargeVideo = isLargeMedia && FileUtils.isVideoFile(mediaTypeProbe)
                                                             val isLargeAudio = isLargeMedia && FileUtils.isAudioFile(mediaTypeProbe)
@@ -599,6 +610,22 @@ fun SmbFileExplorerScreen(
                                                                     remotePath = item.path,
                                                                     displayName = item.name
                                                                 )
+                                                                subtitleCandidate?.let { subtitleItem ->
+                                                                    val subtitleFile = File(
+                                                                        streamMarkerFile.parentFile ?: context.cacheDir,
+                                                                        "${streamMarkerFile.nameWithoutExtension}.srt"
+                                                                    )
+                                                                    runCatching {
+                                                                        SmbClientManager.downloadFile(
+                                                                            connection,
+                                                                            share,
+                                                                            subtitleItem.path,
+                                                                            subtitleFile
+                                                                        )
+                                                                    }.onFailure {
+                                                                        Log.w("SmbFileExplorer", "Failed to download SMB subtitle", it)
+                                                                    }
+                                                                }
                                                                 onShowToast("Streaming video from SMB with random-seek support")
                                                                 onOpenFile(streamMarkerFile)
                                                                 return@runCatching
@@ -611,6 +638,22 @@ fun SmbFileExplorerScreen(
                                                                     item.path,
                                                                     cacheFile
                                                                 )
+                                                                subtitleCandidate?.let { subtitleItem ->
+                                                                    val subtitleFile = File(
+                                                                        cacheFile.parentFile ?: context.cacheDir,
+                                                                        "${cacheFile.nameWithoutExtension}.srt"
+                                                                    )
+                                                                    runCatching {
+                                                                        SmbClientManager.downloadFile(
+                                                                            connection,
+                                                                            share,
+                                                                            subtitleItem.path,
+                                                                            subtitleFile
+                                                                        )
+                                                                    }.onFailure {
+                                                                        Log.w("SmbFileExplorer", "Failed to download SMB subtitle", it)
+                                                                    }
+                                                                }
                                                                 onOpenFile(cacheFile)
                                                                 return@runCatching
                                                             }
@@ -663,6 +706,7 @@ fun SmbFileExplorerScreen(
                                     )
                                 }
                             }
+
                         }
                     }
                 }
@@ -951,4 +995,3 @@ private fun SmbFileListItem(
         )
     }
 }
-

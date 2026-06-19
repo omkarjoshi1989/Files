@@ -48,6 +48,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.gmail.omkarjoshi1989.model.SmbConnectionConfig
 import com.gmail.omkarjoshi1989.model.SmbRemoteItem
+import com.gmail.omkarjoshi1989.util.FileUtils
 import com.gmail.omkarjoshi1989.util.SmbClientManager
 import com.gmail.omkarjoshi1989.viewmodel.ClipboardOperation
 import com.gmail.omkarjoshi1989.viewmodel.ClipboardRepository
@@ -247,7 +248,7 @@ fun SmbBrowserScreen(
                                             Text(item.name, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                             if (!item.isDirectory) {
                                                 Text(
-                                                    text = "${item.size} bytes",
+                                                    text = FileUtils.formatFileSize(item.size),
                                                     style = MaterialTheme.typography.bodySmall,
                                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                                 )

@@ -9,8 +9,11 @@ import androidx.media3.datasource.DataSpec
 import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.TransferListener
 import java.io.IOException
+import java.util.concurrent.Executors
+import java.util.concurrent.ScheduledFuture
+import java.util.concurrent.TimeUnit
 
-@OptIn(UnstableApi::class)
+@UnstableApi
 class SmbSeekableDataSourceFactory(
 	private val context: Context
 ) : DataSource.Factory {
@@ -19,38 +22,68 @@ class SmbSeekableDataSourceFactory(
 	}
 }
 
-@OptIn(UnstableApi::class)
+@UnstableApi
 private class SmbSeekableDataSource(
 	private val fallback: DataSource
 ) : DataSource {
+	companion object {
+		private const val READER_KEEP_ALIVE_MS = 8_000L
+		private val readerCloseExecutor = Executors.newSingleThreadScheduledExecutor { runnable ->
+			Thread(runnable, "SmbSeekableDataSourceCloser").apply { isDaemon = true }
+		}
+	}
 
 	private var openedWithSmb = false
 	private var currentUri: Uri? = null
 	private var reader: SmbClientManager.RandomAccessReader? = null
 	private var readPosition: Long = 0L
 	private var bytesRemaining: Long = 0L
+	private var pendingReaderClose: ScheduledFuture<*>? = null
 
 	override fun addTransferListener(transferListener: TransferListener) {
 		fallback.addTransferListener(transferListener)
 	}
 
+	@Synchronized
 	override fun open(dataSpec: DataSpec): Long {
-		closeActiveReader()
-		currentUri = dataSpec.uri
-
 		val streamEntry = SmbStreamRegistry.findByUri(dataSpec.uri)
 		if (streamEntry == null) {
+			// Not an SMB stream — close any lingering SMB reader and use the fallback.
+			closeReaderImmediately()
 			openedWithSmb = false
+			currentUri = dataSpec.uri
 			return fallback.open(dataSpec)
 		}
 
 		openedWithSmb = true
-		val smbReader = SmbClientManager.openRandomAccessReader(
-			config = streamEntry.connection,
-			shareName = streamEntry.shareName,
-			remotePath = streamEntry.remotePath
-		)
-		reader = smbReader
+		cancelPendingReaderClose()
+
+		// Re-use the existing connection when seeking within the same file.
+		// MKV (Matroska) requires multiple backward/forward seeks during initial
+		// parsing (reading the Cues section near EOF, then jumping back to the
+		// cluster data).  Creating a brand-new TCP+SMB connection on every seek
+		// caused each seek to take 1-3 s, which either hit ExoPlayer's load
+		// timeout or exhausted the server's connection limit — making MKV files
+		// unplayable.  Since RandomAccessReader.readAt() already supports
+		// arbitrary offsets, a seek is simply a readPosition update with no
+		// reconnection needed.
+		val smbReader: SmbClientManager.RandomAccessReader =
+			if (reader != null && currentUri == dataSpec.uri) {
+				// Same file, different position — reuse the open connection.
+				reader!!
+			} else {
+				// New file (or first open) — close the old connection and open a fresh one.
+				closeActiveReader()
+				val newReader = SmbClientManager.openRandomAccessReader(
+					config = streamEntry.connection,
+					shareName = streamEntry.shareName,
+					remotePath = streamEntry.remotePath
+				)
+				reader = newReader
+				newReader
+			}
+
+		currentUri = dataSpec.uri
 
 		val fileLength = smbReader.length
 		if (dataSpec.position > fileLength) {
@@ -67,6 +100,7 @@ private class SmbSeekableDataSource(
 		return bytesRemaining
 	}
 
+	@Synchronized
 	override fun read(buffer: ByteArray, offset: Int, length: Int): Int {
 		if (!openedWithSmb) {
 			return fallback.read(buffer, offset, length)
@@ -84,20 +118,56 @@ private class SmbSeekableDataSource(
 		return read
 	}
 
+	@Synchronized
 	override fun getUri(): Uri? {
 		return if (openedWithSmb) currentUri else fallback.uri
 	}
 
+	@Synchronized
 	override fun close() {
 		if (openedWithSmb) {
-			closeActiveReader()
+			// ExoPlayer may close/open repeatedly during seeks. Keep the SMB reader
+			// warm briefly so seek-heavy containers (e.g. MKV) avoid reconnect churn.
+			scheduleDeferredReaderClose()
 			openedWithSmb = false
-			currentUri = null
 			return
 		}
 		fallback.close()
 	}
 
+	@Synchronized
+	private fun scheduleDeferredReaderClose() {
+		if (reader == null) return
+		cancelPendingReaderClose()
+		pendingReaderClose = readerCloseExecutor.schedule(
+			{ closeReaderIfIdle() },
+			READER_KEEP_ALIVE_MS,
+			TimeUnit.MILLISECONDS
+		)
+	}
+
+	@Synchronized
+	private fun closeReaderIfIdle() {
+		if (!openedWithSmb) {
+			closeActiveReader()
+			currentUri = null
+		}
+	}
+
+	@Synchronized
+	private fun cancelPendingReaderClose() {
+		pendingReaderClose?.cancel(false)
+		pendingReaderClose = null
+	}
+
+	@Synchronized
+	private fun closeReaderImmediately() {
+		cancelPendingReaderClose()
+		closeActiveReader()
+		currentUri = null
+	}
+
+	@Synchronized
 	private fun closeActiveReader() {
 		val active = reader ?: return
 		reader = null

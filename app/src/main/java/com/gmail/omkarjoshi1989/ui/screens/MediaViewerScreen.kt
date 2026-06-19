@@ -92,6 +92,7 @@ import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
+import androidx.media3.common.MimeTypes
 import androidx.media3.common.Player
 import androidx.media3.common.TrackSelectionOverride
 import androidx.media3.common.Tracks
@@ -138,6 +139,7 @@ import androidx.compose.material3.rememberModalBottomSheetState
 import com.gmail.omkarjoshi1989.util.FavoritesManager
 import com.gmail.omkarjoshi1989.util.RecycleBinManager
 import com.gmail.omkarjoshi1989.util.SmbSeekableDataSourceFactory
+import com.gmail.omkarjoshi1989.util.SubtitleSidecarResolver
 
 @kotlin.OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -957,6 +959,30 @@ private fun ImagePage(
     }
 }
 
+private fun findLocalSubtitleFile(videoFile: File): File? {
+    val parent = videoFile.parentFile ?: return null
+    val subtitleFiles = parent.listFiles()
+        ?.filter { it.isFile }
+        ?: return null
+    return SubtitleSidecarResolver.findBestMatchingSrt(
+        videoName = videoFile.name,
+        candidates = subtitleFiles,
+        nameSelector = { it.name }
+    )
+}
+
+private fun inferVideoMimeType(file: File): String? {
+    return when (file.extension.lowercase()) {
+        "mkv" -> MimeTypes.VIDEO_MATROSKA
+        "webm" -> MimeTypes.VIDEO_WEBM
+        "mp4", "m4v" -> MimeTypes.VIDEO_MP4
+        "mov" -> "video/quicktime"
+        "3gp" -> "video/3gpp"
+        "ts", "mts", "m2ts" -> MimeTypes.VIDEO_MP2T
+        else -> null
+    }
+}
+
 @OptIn(UnstableApi::class)
 @Composable
 private fun VideoPage(
@@ -977,15 +1003,24 @@ private fun VideoPage(
         ProgressiveMediaSource.Factory(smbDataSourceFactory)
     }
 
+    // Use more generous buffer durations for files that may be coming from a
+    // network source (SMB).  MKV containers in particular require multiple
+    // backward/forward seeks during initial parsing; a small buffer caused
+    // ExoPlayer to stall or raise a playback error before the first frame was
+    // decoded.  These values are still well within RAM budget for a single
+    // video and do not affect local-file performance.
+    val isNetworkStream = remember(file.absolutePath) {
+        file.absolutePath.contains("smb_stream_") || file.absolutePath.contains("smb_open_")
+    }
     val exoPlayer = remember(file.absolutePath) {
         ExoPlayer.Builder(context)
             .setLoadControl(
                 DefaultLoadControl.Builder()
                     .setBufferDurationsMs(
-                        /* minBufferMs = */ 2_000,
-                        /* maxBufferMs = */ 10_000,
-                        /* bufferForPlaybackMs = */ 300,
-                        /* bufferForPlaybackAfterRebufferMs = */ 700
+                        /* minBufferMs = */ if (isNetworkStream) 15_000 else 2_000,
+                        /* maxBufferMs = */ if (isNetworkStream) 60_000 else 10_000,
+                        /* bufferForPlaybackMs = */ if (isNetworkStream) 3_000 else 300,
+                        /* bufferForPlaybackAfterRebufferMs = */ if (isNetworkStream) 5_000 else 700
                     )
                     .build()
             )
@@ -1033,7 +1068,25 @@ private fun VideoPage(
                     prefs.getLong(file.absolutePath, 0L).coerceAtLeast(0L)
                 } catch (_: Exception) { 0L }
 
-                val mediaSource = mediaSourceFactory.createMediaSource(MediaItem.fromUri(mediaUri))
+                val mediaItem = MediaItem.Builder()
+                    .setUri(mediaUri)
+                    .setMimeType(inferVideoMimeType(file))
+                    .apply {
+                        val localSubtitle = findLocalSubtitleFile(file)
+                        if (localSubtitle != null) {
+                            setSubtitleConfigurations(
+                                listOf(
+                                    MediaItem.SubtitleConfiguration.Builder(android.net.Uri.fromFile(localSubtitle))
+                                        .setMimeType(MimeTypes.APPLICATION_SUBRIP)
+                                        .setSelectionFlags(C.SELECTION_FLAG_DEFAULT)
+                                        .build()
+                                )
+                            )
+                        }
+                    }
+                    .build()
+
+                val mediaSource = mediaSourceFactory.createMediaSource(mediaItem)
                 exoPlayer.setMediaSource(mediaSource, startPosition)
                 exoPlayer.prepare()
                 // Reset playback speed for the new file
@@ -2086,4 +2139,3 @@ private fun loadAlbumArt(file: File): Bitmap? {
         }
     }
 }
-
