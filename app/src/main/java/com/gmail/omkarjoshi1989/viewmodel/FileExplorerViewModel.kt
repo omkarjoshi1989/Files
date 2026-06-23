@@ -14,6 +14,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.gmail.omkarjoshi1989.model.FileItem
 import com.gmail.omkarjoshi1989.util.DirectoryCacheManager
+import com.gmail.omkarjoshi1989.util.BackgroundOperationsManager
 import com.gmail.omkarjoshi1989.util.FileOperationNotificationHelper
 import com.gmail.omkarjoshi1989.util.RecycleBinManager
 import com.gmail.omkarjoshi1989.util.SettingsManager
@@ -793,6 +794,22 @@ class FileExplorerViewModel(application: Application) : AndroidViewModel(applica
 
             try {
                 withContext(Dispatchers.IO) {
+                    // Create individual operation items for each file
+                    val operationIds = mutableMapOf<String, String>() // fileName -> operationId
+                    for (sourceFile in clipData.files) {
+                        val operationId = "paste_${System.currentTimeMillis()}_${sourceFile.name}_${if (isCut) "cut" else "copy"}"
+                        operationIds[sourceFile.name] = operationId
+                        BackgroundOperationsManager.start(
+                            id = operationId,
+                            title = "$opVerb item",
+                            detail = "Preparing...",
+                            total = 1,
+                            fileName = sourceFile.name,
+                            sourcePath = sourceFile.parentFile?.absolutePath.orEmpty(),
+                            destinationPath = _currentPath.value
+                        )
+                    }
+
                     clipData.files.forEachIndexed { index, sourceFile ->
                         // ── per-file progress update ─────────────────────────
                         _pasteProgress.value = PasteProgressState(
@@ -801,6 +818,21 @@ class FileExplorerViewModel(application: Application) : AndroidViewModel(applica
                             current       = index + 1,
                             total         = total
                         )
+
+                        val operationId = operationIds[sourceFile.name]
+                        if (operationId != null) {
+                            BackgroundOperationsManager.progress(
+                                id = operationId,
+                                title = "$opVerb item",
+                                detail = "In progress...",
+                                current = 1,
+                                total = 1,
+                                fileName = sourceFile.name,
+                                sourcePath = sourceFile.parentFile?.absolutePath.orEmpty(),
+                                destinationPath = _currentPath.value
+                            )
+                        }
+
                         FileOperationNotificationHelper.showProgress(
                             context,
                             title   = "$opVerb ${if (total == 1) sourceFile.name else "$total items"}",
@@ -811,23 +843,66 @@ class FileExplorerViewModel(application: Application) : AndroidViewModel(applica
                         )
 
                         val destination = File(_currentPath.value, sourceFile.name)
-                        if (sourceFile.absolutePath == destination.absolutePath) return@forEachIndexed
-
-                        when (clipData.operation) {
-                            ClipboardOperation.COPY -> {
-                                if (sourceFile.isDirectory)
-                                    sourceFile.copyRecursively(destination, overwrite = false)
-                                else
-                                    sourceFile.copyTo(destination, overwrite = false)
+                        if (sourceFile.absolutePath == destination.absolutePath) {
+                            if (operationId != null) {
+                                BackgroundOperationsManager.complete(
+                                    id = operationId,
+                                    title = "$doneVerb item",
+                                    detail = "Skipped (same location)",
+                                    current = 1,
+                                    total = 1,
+                                    fileName = sourceFile.name,
+                                    sourcePath = sourceFile.parentFile?.absolutePath.orEmpty(),
+                                    destinationPath = _currentPath.value
+                                )
                             }
-                            ClipboardOperation.CUT -> {
-                                if (sourceFile.isDirectory) {
-                                    sourceFile.copyRecursively(destination, overwrite = false)
-                                    sourceFile.deleteRecursively()
-                                } else {
-                                    sourceFile.copyTo(destination, overwrite = false)
-                                    sourceFile.delete()
+                            return@forEachIndexed
+                        }
+
+                        runCatching {
+                            when (clipData.operation) {
+                                ClipboardOperation.COPY -> {
+                                    if (sourceFile.isDirectory)
+                                        sourceFile.copyRecursively(destination, overwrite = false)
+                                    else
+                                        sourceFile.copyTo(destination, overwrite = false)
                                 }
+                                ClipboardOperation.CUT -> {
+                                    if (sourceFile.isDirectory) {
+                                        sourceFile.copyRecursively(destination, overwrite = false)
+                                        sourceFile.deleteRecursively()
+                                    } else {
+                                        sourceFile.copyTo(destination, overwrite = false)
+                                        sourceFile.delete()
+                                    }
+                                }
+                            }
+                        }.onSuccess {
+                            if (operationId != null) {
+                                val destFolder = File(_currentPath.value).name
+                                BackgroundOperationsManager.complete(
+                                    id = operationId,
+                                    title = "$doneVerb item",
+                                    detail = "${sourceFile.name} → $destFolder",
+                                    current = 1,
+                                    total = 1,
+                                    fileName = sourceFile.name,
+                                    sourcePath = sourceFile.parentFile?.absolutePath.orEmpty(),
+                                    destinationPath = _currentPath.value
+                                )
+                            }
+                        }.onFailure { err ->
+                            if (operationId != null) {
+                                BackgroundOperationsManager.fail(
+                                    id = operationId,
+                                    title = "$opVerb failed",
+                                    detail = err.message ?: "Unknown error",
+                                    current = 0,
+                                    total = 1,
+                                    fileName = sourceFile.name,
+                                    sourcePath = sourceFile.parentFile?.absolutePath.orEmpty(),
+                                    destinationPath = _currentPath.value
+                                )
                             }
                         }
                     }

@@ -17,12 +17,15 @@ import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.rememberTransformableState
+import androidx.compose.foundation.gestures.transformable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -70,11 +73,15 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ColorFilter
+import androidx.compose.ui.graphics.ColorMatrix
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.unit.IntSize
 import android.content.res.Configuration
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
@@ -99,11 +106,13 @@ import androidx.media3.common.Tracks
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
-import androidx.media3.exoplayer.source.ProgressiveMediaSource
+import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
 import androidx.media3.ui.PlayerView
 import coil.compose.AsyncImage
+import coil.size.Precision
+import coil.size.Size as CoilSize
 import coil.request.ImageRequest
 import androidx.compose.runtime.produceState
 import kotlinx.coroutines.Dispatchers
@@ -116,7 +125,14 @@ import com.gmail.omkarjoshi1989.service.MusicPlaybackService
 import com.gmail.omkarjoshi1989.util.FileUtils
 import com.google.common.util.concurrent.MoreExecutors
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.Job
 import java.io.File
+import java.io.FileOutputStream
+import java.util.Locale
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.material3.CircularProgressIndicator
+import coil.imageLoader
 import android.content.Context
 import android.util.Log
 import androidx.compose.foundation.layout.width
@@ -142,6 +158,339 @@ import com.gmail.omkarjoshi1989.util.RecycleBinManager
 import com.gmail.omkarjoshi1989.util.SmbSeekableDataSourceFactory
 import com.gmail.omkarjoshi1989.util.SubtitleSidecarResolver
 
+private enum class ImageFitMode(val label: String, val contentScale: ContentScale) {
+    Fit("Fit", ContentScale.Fit),
+    Fill("Fill", ContentScale.Crop),
+    Original("Original", ContentScale.None)
+}
+
+private enum class ImageCropPreset(val label: String, val ratio: Float?) {
+    Free("Free", null),
+    Square("1:1", 1f),
+    Portrait("4:5", 4f / 5f),
+    Wide("16:9", 16f / 9f)
+}
+
+private enum class ImageAdjustmentPreset(val label: String) {
+    Auto("Auto"),
+    BlackWhite("B&W"),
+    Vivid("Vivid"),
+    Soft("Soft"),
+    Custom("Custom")
+}
+
+private enum class ImageEditorMode {
+    Full,
+    CropOnly
+}
+
+private data class ImageEditRecipe(
+    val rotationQuarterTurns: Int = 0,
+    val flipHorizontal: Boolean = false,
+    val flipVertical: Boolean = false,
+    val cropPreset: ImageCropPreset = ImageCropPreset.Free,
+    val brightnessAdj: Float = 0f,
+    val contrastAdj: Float = 1f,
+    val saturationAdj: Float = 1f,
+    val warmthAdj: Float = 0f,
+    val highlightsAdj: Float = 0f,
+    val shadowsAdj: Float = 0f,
+    val adjustmentPreset: ImageAdjustmentPreset = ImageAdjustmentPreset.Custom
+) {
+    val normalizedQuarterTurns: Int
+        get() = ((rotationQuarterTurns % 4) + 4) % 4
+    val isIdentity: Boolean
+        get() = normalizedQuarterTurns == 0 &&
+            !flipHorizontal &&
+            !flipVertical &&
+            cropPreset == ImageCropPreset.Free &&
+            brightnessAdj == 0f &&
+            contrastAdj == 1f &&
+            saturationAdj == 1f &&
+            warmthAdj == 0f &&
+            highlightsAdj == 0f &&
+            shadowsAdj == 0f
+}
+
+private fun ImageEditRecipe.withAdjustmentPreset(preset: ImageAdjustmentPreset): ImageEditRecipe {
+    return when (preset) {
+        ImageAdjustmentPreset.Auto -> copy(
+            brightnessAdj = 0f,
+            contrastAdj = 1.05f,
+            saturationAdj = 1.08f,
+            warmthAdj = 0.05f,
+            highlightsAdj = -0.05f,
+            shadowsAdj = 0.10f,
+            adjustmentPreset = preset
+        )
+        ImageAdjustmentPreset.BlackWhite -> copy(
+            brightnessAdj = 0f,
+            contrastAdj = 1.08f,
+            saturationAdj = 0f,
+            warmthAdj = 0f,
+            highlightsAdj = 0f,
+            shadowsAdj = 0.05f,
+            adjustmentPreset = preset
+        )
+        ImageAdjustmentPreset.Vivid -> copy(
+            brightnessAdj = 0f,
+            contrastAdj = 1.15f,
+            saturationAdj = 1.25f,
+            warmthAdj = 0.08f,
+            highlightsAdj = 0.05f,
+            shadowsAdj = -0.05f,
+            adjustmentPreset = preset
+        )
+        ImageAdjustmentPreset.Soft -> copy(
+            brightnessAdj = 0.03f,
+            contrastAdj = 0.92f,
+            saturationAdj = 0.88f,
+            warmthAdj = 0.02f,
+            highlightsAdj = -0.10f,
+            shadowsAdj = 0.15f,
+            adjustmentPreset = preset
+        )
+        ImageAdjustmentPreset.Custom -> copy(adjustmentPreset = preset)
+    }
+}
+
+private fun identityColorMatrixValues(): FloatArray = floatArrayOf(
+    1f, 0f, 0f, 0f, 0f,
+    0f, 1f, 0f, 0f, 0f,
+    0f, 0f, 1f, 0f, 0f,
+    0f, 0f, 0f, 1f, 0f
+)
+
+private fun multiplyColorMatrices(left: FloatArray, right: FloatArray): FloatArray {
+    val out = FloatArray(20)
+    for (row in 0..3) {
+        for (col in 0..4) {
+            val idx = row * 5 + col
+            out[idx] = if (col == 4) {
+                left[row * 5 + 4] +
+                    left[row * 5] * right[4] +
+                    left[row * 5 + 1] * right[9] +
+                    left[row * 5 + 2] * right[14] +
+                    left[row * 5 + 3] * right[19]
+            } else {
+                left[row * 5] * right[col] +
+                    left[row * 5 + 1] * right[5 + col] +
+                    left[row * 5 + 2] * right[10 + col] +
+                    left[row * 5 + 3] * right[15 + col]
+            }
+        }
+    }
+    return out
+}
+
+private fun ImageEditRecipe.buildAdjustmentMatrixValues(): FloatArray? {
+    val hasAdjustments =
+        brightnessAdj != 0f || contrastAdj != 1f || saturationAdj != 1f ||
+            warmthAdj != 0f || highlightsAdj != 0f || shadowsAdj != 0f
+    if (!hasAdjustments) return null
+
+    var matrix = identityColorMatrixValues()
+
+    val contrast = contrastAdj.coerceIn(0.5f, 1.6f)
+    val contrastTranslate = (1f - contrast) * 128f
+    matrix = multiplyColorMatrices(floatArrayOf(
+        contrast, 0f, 0f, 0f, contrastTranslate,
+        0f, contrast, 0f, 0f, contrastTranslate,
+        0f, 0f, contrast, 0f, contrastTranslate,
+        0f, 0f, 0f, 1f, 0f
+    ), matrix)
+
+    val saturation = saturationAdj.coerceIn(0f, 2f)
+    val invSat = 1f - saturation
+    val r = 0.213f * invSat; val g = 0.715f * invSat; val b = 0.072f * invSat
+    matrix = multiplyColorMatrices(floatArrayOf(
+        r + saturation, g, b, 0f, 0f,
+        r, g + saturation, b, 0f, 0f,
+        r, g, b + saturation, 0f, 0f,
+        0f, 0f, 0f, 1f, 0f
+    ), matrix)
+
+    val warmth = warmthAdj.coerceIn(-1f, 1f)
+    val warmthRed = (1f + warmth * 0.18f).coerceIn(0.75f, 1.25f)
+    val warmthBlue = (1f - warmth * 0.18f).coerceIn(0.75f, 1.25f)
+    matrix = multiplyColorMatrices(floatArrayOf(
+        warmthRed, 0f, 0f, 0f, 0f,
+        0f, 1f, 0f, 0f, 0f,
+        0f, 0f, warmthBlue, 0f, 0f,
+        0f, 0f, 0f, 1f, 0f
+    ), matrix)
+
+    val highlights = highlightsAdj.coerceIn(-1f, 1f)
+    val shadows = shadowsAdj.coerceIn(-1f, 1f)
+    val tonalScale = (1f - highlights * 0.12f + shadows * 0.04f).coerceIn(0.75f, 1.25f)
+    val tonalOffset = shadows * 28f - highlights * 20f
+    matrix = multiplyColorMatrices(floatArrayOf(
+        tonalScale, 0f, 0f, 0f, tonalOffset,
+        0f, tonalScale, 0f, 0f, tonalOffset,
+        0f, 0f, tonalScale, 0f, tonalOffset,
+        0f, 0f, 0f, 1f, 0f
+    ), matrix)
+
+    val brightness = brightnessAdj.coerceIn(-0.5f, 0.5f) * 255f
+    matrix = multiplyColorMatrices(floatArrayOf(
+        1f, 0f, 0f, 0f, brightness,
+        0f, 1f, 0f, 0f, brightness,
+        0f, 0f, 1f, 0f, brightness,
+        0f, 0f, 0f, 1f, 0f
+    ), matrix)
+
+    return matrix
+}
+
+private fun ImageEditRecipe.toColorFilterOrNull(): ColorFilter? {
+    val values = buildAdjustmentMatrixValues() ?: return null
+    return ColorFilter.colorMatrix(ColorMatrix(values))
+}
+
+private suspend fun applyEditRecipeAndSave(
+    context: Context,
+    sourceFile: File,
+    recipe: ImageEditRecipe,
+    saveCopy: Boolean
+): Result<File> = withContext(Dispatchers.IO) {
+    runCatching {
+        val sourceBitmap = try {
+            BitmapFactory.decodeFile(sourceFile.absolutePath)
+                ?: error("Failed to decode image: ${sourceFile.name}")
+        } catch (e: OutOfMemoryError) {
+            throw java.io.IOException("Image is too large to process — close other apps and try again")
+        }
+
+        // Build rotation + flip matrix
+        val m = android.graphics.Matrix()
+        val degrees = recipe.normalizedQuarterTurns * 90f
+        if (degrees != 0f) m.postRotate(degrees)
+        val cx = sourceBitmap.width / 2f; val cy = sourceBitmap.height / 2f
+        if (recipe.flipHorizontal) m.postScale(-1f, 1f, cx, cy)
+        if (recipe.flipVertical) m.postScale(1f, -1f, cx, cy)
+
+        var bitmap: Bitmap = if (!m.isIdentity) {
+            Bitmap.createBitmap(sourceBitmap, 0, 0, sourceBitmap.width, sourceBitmap.height, m, true)
+                .also { if (it !== sourceBitmap) sourceBitmap.recycle() }
+        } else sourceBitmap
+
+        // Center-crop to preset ratio
+        val cropRatio = recipe.cropPreset.ratio
+        if (cropRatio != null) {
+            val w = bitmap.width; val h = bitmap.height
+            val currentRatio = w.toFloat() / h
+            val (newW, newH) = if (currentRatio > cropRatio) {
+                ((h * cropRatio).toInt()) to h
+            } else {
+                w to ((w / cropRatio).toInt())
+            }
+            val cx2 = (w - newW) / 2; val cy2 = (h - newH) / 2
+            val cropped = Bitmap.createBitmap(bitmap, cx2, cy2, newW.coerceAtLeast(1), newH.coerceAtLeast(1))
+            if (cropped !== bitmap) bitmap.recycle()
+            bitmap = cropped
+        }
+
+        // Apply color adjustments
+        val matrixValues = recipe.buildAdjustmentMatrixValues()
+        if (matrixValues != null) {
+            val androidCm = android.graphics.ColorMatrix(matrixValues)
+            val paint = android.graphics.Paint().apply {
+                colorFilter = android.graphics.ColorMatrixColorFilter(androidCm)
+            }
+            val adjusted = Bitmap.createBitmap(bitmap.width, bitmap.height, Bitmap.Config.ARGB_8888)
+            android.graphics.Canvas(adjusted).drawBitmap(bitmap, 0f, 0f, paint)
+            bitmap.recycle()
+            bitmap = adjusted
+        }
+
+        // Write to temp file
+        val ext = sourceFile.extension.lowercase()
+        val isPng = ext == "png"
+        val parentDir = sourceFile.parentFile
+            ?: error("Source file has no parent directory")
+        if (!parentDir.canWrite()) error("Destination folder is read-only")
+        val tempFile = java.io.File.createTempFile("img_edit_", ".$ext", parentDir)
+        try {
+            FileOutputStream(tempFile).use { fos ->
+                val ok = if (isPng) bitmap.compress(Bitmap.CompressFormat.PNG, 100, fos)
+                         else bitmap.compress(Bitmap.CompressFormat.JPEG, 95, fos)
+                if (!ok) error("Bitmap compression failed")
+            }
+        } catch (e: java.io.IOException) {
+            tempFile.delete()
+            if (e.message?.contains("space", ignoreCase = true) == true ||
+                e.message?.contains("ENOSPC", ignoreCase = true) == true
+            ) {
+                throw java.io.IOException("Not enough storage space to save the image")
+            }
+            throw e
+        }
+        bitmap.recycle()
+
+        // Copy EXIF metadata (JPEG only, best-effort)
+        if (!isPng) {
+            try {
+                val srcExif = android.media.ExifInterface(sourceFile.absolutePath)
+                val dstExif = android.media.ExifInterface(tempFile.absolutePath)
+                listOf(
+                    android.media.ExifInterface.TAG_DATETIME,
+                    android.media.ExifInterface.TAG_DATETIME_ORIGINAL,
+                    android.media.ExifInterface.TAG_GPS_LATITUDE,
+                    android.media.ExifInterface.TAG_GPS_LATITUDE_REF,
+                    android.media.ExifInterface.TAG_GPS_LONGITUDE,
+                    android.media.ExifInterface.TAG_GPS_LONGITUDE_REF,
+                    android.media.ExifInterface.TAG_GPS_ALTITUDE,
+                    android.media.ExifInterface.TAG_GPS_ALTITUDE_REF,
+                    android.media.ExifInterface.TAG_MAKE,
+                    android.media.ExifInterface.TAG_MODEL
+                ).forEach { tag ->
+                    srcExif.getAttribute(tag)?.let { dstExif.setAttribute(tag, it) }
+                }
+                dstExif.setAttribute(
+                    android.media.ExifInterface.TAG_ORIENTATION,
+                    android.media.ExifInterface.ORIENTATION_NORMAL.toString()
+                )
+                dstExif.saveAttributes()
+            } catch (_: Exception) { /* best-effort */ }
+        }
+
+        // Move to final location
+        val finalFile = if (saveCopy) {
+            val base = sourceFile.nameWithoutExtension
+            val parent = sourceFile.parentFile ?: error("No parent directory")
+            var candidate = java.io.File(parent, "${base}_edited.$ext")
+            var n = 1
+            while (candidate.exists()) { candidate = java.io.File(parent, "${base}_edited_$n.$ext"); n++ }
+            tempFile.renameTo(candidate)
+            candidate
+        } else {
+            sourceFile.delete()
+            if (!tempFile.renameTo(sourceFile)) {
+                // Fallback copy if rename fails (cross-device)
+                tempFile.inputStream().use { inp -> sourceFile.outputStream().use { out -> inp.copyTo(out) } }
+                tempFile.delete()
+            }
+            sourceFile
+        }
+
+        // Notify MediaStore
+        android.media.MediaScannerConnection.scanFile(context, arrayOf(finalFile.absolutePath), null, null)
+        finalFile
+    }
+}
+
+private fun classifySaveError(err: Throwable): String = when {
+    err is OutOfMemoryError ->
+        "Image is too large to process — close other apps and try again"
+    err.message?.contains("space", ignoreCase = true) == true ||
+        err.message?.contains("ENOSPC", ignoreCase = true) == true ->
+        "Not enough storage space to save the image"
+    err.message?.contains("read-only", ignoreCase = true) == true ||
+        err.message?.contains("Permission denied", ignoreCase = true) == true ->
+        "Cannot write to this location — file may be read-only"
+    else -> err.message ?: "Save failed"
+}
+
 @kotlin.OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MediaViewerScreen(
@@ -154,6 +503,7 @@ fun MediaViewerScreen(
     onVideoPageChanged: (Boolean) -> Unit = {},
     onVideoPlayingChanged: (Boolean) -> Unit = {},
     onFileDeleted: (File) -> Unit = {},
+    onFileAdded: (File) -> Unit = {},
     onClose: () -> Unit
 ) {
     val context = LocalContext.current
@@ -189,13 +539,35 @@ fun MediaViewerScreen(
     var showDeleteDialog by remember { mutableStateOf(false) }
     var showBrightnessSheet by remember { mutableStateOf(false) }
     var slideshowActive by remember { mutableStateOf(false) }
+    var isCurrentImageZoomed by remember { mutableStateOf(false) }
+    var imageResetRequest by remember { mutableIntStateOf(0) }
+    var imageFitMode by remember { mutableStateOf(ImageFitMode.Fit) }
+    var showImageHud by remember { mutableStateOf(true) }
+    var showImageEditor by remember { mutableStateOf(false) }
+    var imageEditorMode by remember { mutableStateOf(ImageEditorMode.Full) }
+    var appliedImageEdits by remember { mutableStateOf<Map<String, ImageEditRecipe>>(emptyMap()) }
+    var editHistory by remember { mutableStateOf(listOf(ImageEditRecipe())) }
+    var editHistoryIndex by remember { mutableIntStateOf(0) }
     val brightnessSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val currentEditRecipe = editHistory.getOrElse(editHistoryIndex) { ImageEditRecipe() }
+    val coroutineScope = rememberCoroutineScope()
+    var activeSaveJob by remember { mutableStateOf<Job?>(null) }
+    var showSaveProgress by remember { mutableStateOf(false) }
+    var showReplaceConfirmDialog by remember { mutableStateOf(false) }
+    var saveResultMessage by remember { mutableStateOf<String?>(null) }
+    var saveErrorMessage by remember { mutableStateOf<String?>(null) }
+
+    DisposableEffect(Unit) {
+        onDispose { activeSaveJob?.cancel() }
+    }
 
     // ── Swipe lock: disable left/right swipe when in landscape + video page ──
     val configuration = LocalConfiguration.current
     val isLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
     val isCurrentFileVideo = currentFile != null && FileUtils.isVideoFile(currentFile)
-    val pagerScrollEnabled = !(isLandscape && isCurrentFileVideo)
+    val pagerScrollEnabled = !(isLandscape && isCurrentFileVideo) &&
+        !(isCurrentFileImage && isCurrentImageZoomed) &&
+        !showImageEditor
 
     // Notify the host activity when the current page type changes (for auto-PiP)
     LaunchedEffect(isCurrentFileVideo) {
@@ -213,7 +585,9 @@ fun MediaViewerScreen(
             0.5f
         } else {
             val current = screenActivity.window.attributes.screenBrightness
-            if (current >= 0f) current else {
+            if (current >= 0f) {
+                current
+            } else {
                 try {
                     Settings.System.getInt(
                         screenActivity.contentResolver,
@@ -590,6 +964,10 @@ fun MediaViewerScreen(
             ?.let { FavoritesManager.isFavorite(context, it.absolutePath) }
             ?: false
     }
+    LaunchedEffect(currentFile?.absolutePath) {
+        isCurrentImageZoomed = false
+        if (showImageEditor) showImageEditor = false
+    }
 
     // ── Slideshow: auto-advance through image pages in the folder ──────
     LaunchedEffect(slideshowActive) {
@@ -657,6 +1035,19 @@ fun MediaViewerScreen(
             when {
                 FileUtils.isImageFile(file) -> ImagePage(
                     file = file,
+                    isActive = isCurrentPage,
+                    resetRequest = imageResetRequest,
+                    fitMode = imageFitMode,
+                    showHud = showImageHud && !showImageEditor,
+                    editRecipe = if (showImageEditor && isCurrentPage) {
+                        currentEditRecipe
+                    } else {
+                        appliedImageEdits[file.absolutePath] ?: ImageEditRecipe()
+                    },
+                    gesturesEnabled = !(showImageEditor && isCurrentPage),
+                    onZoomedStateChanged = { zoomed ->
+                        if (isCurrentPage) isCurrentImageZoomed = zoomed
+                    },
                     onTap = {
                         if (slideshowActive) slideshowActive = false
                         else isImmersive = !isImmersive
@@ -700,7 +1091,7 @@ fun MediaViewerScreen(
 
         // Top bar overlay with animation
         AnimatedVisibility(
-            visible = !isImmersive && !isInPipMode,
+            visible = !isImmersive && !isInPipMode && !showImageEditor,
             enter = slideInVertically(initialOffsetY = { -it }) + fadeIn(),
             exit = slideOutVertically(targetOffsetY = { -it }) + fadeOut()
         ) {
@@ -734,7 +1125,7 @@ fun MediaViewerScreen(
                     }
                 },
                 actions = {
-                    if (isCurrentFileImage && currentFile != null) {
+                    if (isCurrentFileImage) {
                         Box {
                             IconButton(onClick = { showImageMenu = true }) {
                                 Icon(
@@ -802,6 +1193,86 @@ fun MediaViewerScreen(
                                         showBrightnessSheet = true
                                     }
                                 )
+                                DropdownMenuItem(
+                                    text = { Text("Reset Zoom") },
+                                    onClick = {
+                                        showImageMenu = false
+                                        imageResetRequest++
+                                    }
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("Edit") },
+                                    onClick = {
+                                        showImageMenu = false
+                                        val path = currentFile?.absolutePath ?: return@DropdownMenuItem
+                                        val base = appliedImageEdits[path] ?: ImageEditRecipe()
+                                        editHistory = listOf(base)
+                                        editHistoryIndex = 0
+                                        imageEditorMode = ImageEditorMode.Full
+                                        showImageEditor = true
+                                        isImmersive = false
+                                    }
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("Crop Image") },
+                                    onClick = {
+                                        showImageMenu = false
+                                        val path = currentFile?.absolutePath ?: return@DropdownMenuItem
+                                        val base = appliedImageEdits[path] ?: ImageEditRecipe()
+                                        editHistory = listOf(base)
+                                        editHistoryIndex = 0
+                                        imageEditorMode = ImageEditorMode.CropOnly
+                                        showImageEditor = true
+                                        isImmersive = false
+                                    }
+                                )
+                                if (!((appliedImageEdits[currentFile?.absolutePath] ?: ImageEditRecipe()).isIdentity)) {
+                                    DropdownMenuItem(
+                                        text = { Text("Revert Applied Edits") },
+                                        onClick = {
+                                            showImageMenu = false
+                                            currentFile?.absolutePath?.let { path ->
+                                                appliedImageEdits = appliedImageEdits.toMutableMap().also { it.remove(path) }
+                                                imageResetRequest++
+                                            }
+                                        }
+                                    )
+                                }
+                                DropdownMenuItem(
+                                    text = { Text("Fit mode: ${imageFitMode.label}") },
+                                    onClick = { showImageMenu = false }
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("Image Fit") },
+                                    onClick = {
+                                        showImageMenu = false
+                                        imageFitMode = ImageFitMode.Fit
+                                        imageResetRequest++
+                                    }
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("Image Fill") },
+                                    onClick = {
+                                        showImageMenu = false
+                                        imageFitMode = ImageFitMode.Fill
+                                        imageResetRequest++
+                                    }
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("Image Original Size") },
+                                    onClick = {
+                                        showImageMenu = false
+                                        imageFitMode = ImageFitMode.Original
+                                        imageResetRequest++
+                                    }
+                                )
+                                DropdownMenuItem(
+                                    text = { Text(if (showImageHud) "Hide Zoom HUD" else "Show Zoom HUD") },
+                                    onClick = {
+                                        showImageMenu = false
+                                        showImageHud = !showImageHud
+                                    }
+                                )
                             }
                         }
                     }
@@ -854,7 +1325,214 @@ fun MediaViewerScreen(
                 }
             }
         }
+
+        if (showImageEditor && currentFile != null && FileUtils.isImageFile(currentFile)) {
+            fun pushEdit(next: ImageEditRecipe) {
+                editHistory = editHistory.take(editHistoryIndex + 1) + next
+                editHistoryIndex = editHistory.lastIndex
+            }
+            ImageEditorOverlay(
+                recipe = currentEditRecipe,
+                cropOnly = imageEditorMode == ImageEditorMode.CropOnly,
+                canUndo = editHistoryIndex > 0,
+                canRedo = editHistoryIndex < editHistory.lastIndex,
+                onUndo = { editHistoryIndex = (editHistoryIndex - 1).coerceAtLeast(0) },
+                onRedo = { editHistoryIndex = (editHistoryIndex + 1).coerceAtMost(editHistory.lastIndex) },
+                onRotateLeft = {
+                    pushEdit(currentEditRecipe.copy(rotationQuarterTurns = currentEditRecipe.rotationQuarterTurns - 1))
+                },
+                onRotateRight = {
+                    pushEdit(currentEditRecipe.copy(rotationQuarterTurns = currentEditRecipe.rotationQuarterTurns + 1))
+                },
+                onFlipHorizontal = {
+                    pushEdit(currentEditRecipe.copy(flipHorizontal = !currentEditRecipe.flipHorizontal))
+                },
+                onFlipVertical = {
+                    pushEdit(currentEditRecipe.copy(flipVertical = !currentEditRecipe.flipVertical))
+                },
+                onCropPresetChange = { preset ->
+                    pushEdit(currentEditRecipe.copy(cropPreset = preset))
+                },
+                onPresetChange = { preset ->
+                    pushEdit(currentEditRecipe.withAdjustmentPreset(preset))
+                },
+                onBrightnessChange = { value ->
+                    pushEdit(currentEditRecipe.copy(brightnessAdj = value, adjustmentPreset = ImageAdjustmentPreset.Custom))
+                },
+                onContrastChange = { value ->
+                    pushEdit(currentEditRecipe.copy(contrastAdj = value, adjustmentPreset = ImageAdjustmentPreset.Custom))
+                },
+                onSaturationChange = { value ->
+                    pushEdit(currentEditRecipe.copy(saturationAdj = value, adjustmentPreset = ImageAdjustmentPreset.Custom))
+                },
+                onWarmthChange = { value ->
+                    pushEdit(currentEditRecipe.copy(warmthAdj = value, adjustmentPreset = ImageAdjustmentPreset.Custom))
+                },
+                onHighlightsChange = { value ->
+                    pushEdit(currentEditRecipe.copy(highlightsAdj = value, adjustmentPreset = ImageAdjustmentPreset.Custom))
+                },
+                onShadowsChange = { value ->
+                    pushEdit(currentEditRecipe.copy(shadowsAdj = value, adjustmentPreset = ImageAdjustmentPreset.Custom))
+                },
+                onCancel = {
+                    activeSaveJob?.cancel()
+                    activeSaveJob = null
+                    showSaveProgress = false
+                    showImageEditor = false
+                    imageEditorMode = ImageEditorMode.Full
+                },
+                onApply = {
+                    val path = currentFile.absolutePath
+                    val nextMap = appliedImageEdits.toMutableMap()
+                    if (currentEditRecipe.isIdentity) nextMap.remove(path) else nextMap[path] = currentEditRecipe
+                    appliedImageEdits = nextMap
+                    showImageEditor = false
+                    imageEditorMode = ImageEditorMode.Full
+                },
+                onSaveCopy = {
+                    val fileForSave = currentFile
+                    val recipeForSave = currentEditRecipe
+                    activeSaveJob = coroutineScope.launch {
+                        showSaveProgress = true
+                        val result = applyEditRecipeAndSave(context, fileForSave, recipeForSave, saveCopy = true)
+                        showSaveProgress = false
+                        activeSaveJob = null
+                        result.onSuccess { savedFile ->
+                            val path = fileForSave.absolutePath
+                            val nextMap = appliedImageEdits.toMutableMap()
+                            nextMap.remove(path)
+                            appliedImageEdits = nextMap
+                            showImageEditor = false
+                            imageEditorMode = ImageEditorMode.Full
+                            onFileAdded(savedFile)
+                            saveResultMessage = "Saved as ${savedFile.name}"
+                        }.onFailure { err ->
+                            saveErrorMessage = classifySaveError(err)
+                        }
+                    }
+                },
+                onReplaceOriginal = {
+                    val isSmbFile = currentFile.name.startsWith("smb_open_") ||
+                        currentFile.name.startsWith("smb_stream_")
+                    when {
+                        isSmbFile ->
+                            saveErrorMessage = "Cannot replace remote files. Use Save Copy instead."
+                        !currentFile.canWrite() ->
+                            saveErrorMessage = "File is read-only. Use Save Copy instead."
+                        else ->
+                            showReplaceConfirmDialog = true
+                    }
+                }
+            )
+        }
+
+        // ── Save progress indicator ────────────────────────────────────────────
+        if (showSaveProgress) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Black.copy(alpha = 0.55f)),
+                contentAlignment = Alignment.Center
+            ) {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    CircularProgressIndicator(color = Color.White)
+                    Text("Saving…", color = Color.White, fontSize = 14.sp)
+                    TextButton(onClick = {
+                        activeSaveJob?.cancel()
+                        activeSaveJob = null
+                        showSaveProgress = false
+                    }) {
+                        Text("Cancel", color = Color.White.copy(alpha = 0.8f))
+                    }
+                }
+            }
+        }
+
+        // ── Save result toast overlay ──────────────────────────────────────────
+        val msg = saveResultMessage
+        if (msg != null) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .systemBarsPadding()
+                    .padding(bottom = 32.dp)
+            ) {
+                Text(
+                    text = msg,
+                    color = Color.White,
+                    fontSize = 13.sp,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(20.dp))
+                        .background(Color(0xFF1E1E1E))
+                        .padding(horizontal = 18.dp, vertical = 10.dp)
+                        .clickable { saveResultMessage = null }
+                )
+            }
+            LaunchedEffect(msg) {
+                delay(3500)
+                if (saveResultMessage == msg) saveResultMessage = null
+            }
+        }
     } // end outer Box
+
+    // ── Replace original confirmation dialog ───────────────────────────────────
+    if (showReplaceConfirmDialog && currentFile != null) {
+        val fileForReplace = currentFile
+        val recipeForReplace = currentEditRecipe
+        AlertDialog(
+            onDismissRequest = { showReplaceConfirmDialog = false },
+            title = { Text("Replace Original?") },
+            text = { Text("This will permanently overwrite \"${fileForReplace.name}\" with the edited version. This cannot be undone.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    showReplaceConfirmDialog = false
+                    activeSaveJob = coroutineScope.launch {
+                        showSaveProgress = true
+                        val result = applyEditRecipeAndSave(context, fileForReplace, recipeForReplace, saveCopy = false)
+                        showSaveProgress = false
+                        activeSaveJob = null
+                        result.onSuccess { _ ->
+                            val path = fileForReplace.absolutePath
+                            val nextMap = appliedImageEdits.toMutableMap()
+                            nextMap.remove(path)
+                            appliedImageEdits = nextMap
+                            showImageEditor = false
+                            imageEditorMode = ImageEditorMode.Full
+                            // Invalidate Coil memory cache so the replaced image reloads
+                            context.imageLoader.memoryCache?.clear()
+                            imageResetRequest++
+                            saveResultMessage = "Original replaced successfully"
+                        }.onFailure { err ->
+                            saveErrorMessage = classifySaveError(err)
+                        }
+                    }
+                }) {
+                    Text("Replace", color = Color(0xFFD32F2F))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showReplaceConfirmDialog = false }) {
+                    Text("Cancel")
+                }
+            }
+        )
+    }
+
+    // ── Save error dialog ──────────────────────────────────────────────────────
+    val errMsg = saveErrorMessage
+    if (errMsg != null) {
+        AlertDialog(
+            onDismissRequest = { saveErrorMessage = null },
+            title = { Text("Save Failed") },
+            text = { Text(errMsg) },
+            confirmButton = {
+                TextButton(onClick = { saveErrorMessage = null }) { Text("OK") }
+            }
+        )
+    }
 
     // ── Delete confirmation dialog ──────────────────────────────────────────
     if (showDeleteDialog && currentFile != null) {
@@ -936,30 +1614,331 @@ fun MediaViewerScreen(
 @Composable
 private fun ImagePage(
     file: File,
+    isActive: Boolean,
+    resetRequest: Int,
+    fitMode: ImageFitMode,
+    showHud: Boolean,
+    editRecipe: ImageEditRecipe,
+    gesturesEnabled: Boolean,
+    onZoomedStateChanged: (Boolean) -> Unit,
     onTap: () -> Unit
 ) {
+    var scale by remember(file.absolutePath) { mutableStateOf(1f) }
+    var offset by remember(file.absolutePath) { mutableStateOf(Offset.Zero) }
+    var containerSize by remember(file.absolutePath) { mutableStateOf(IntSize.Zero) }
+    var highQualityDecode by remember(file.absolutePath) { mutableStateOf(false) }
+
+    fun clampedOffset(raw: Offset, currentScale: Float): Offset {
+        if (containerSize == IntSize.Zero || currentScale <= 1f) return Offset.Zero
+        val maxX = ((containerSize.width * (currentScale - 1f)) / 2f).coerceAtLeast(0f)
+        val maxY = ((containerSize.height * (currentScale - 1f)) / 2f).coerceAtLeast(0f)
+        return Offset(
+            x = raw.x.coerceIn(-maxX, maxX),
+            y = raw.y.coerceIn(-maxY, maxY)
+        )
+    }
+
+    val transformState = rememberTransformableState { zoomChange, panChange, _ ->
+        val nextScale = (scale * zoomChange).coerceIn(1f, 6f)
+        scale = nextScale
+        offset = if (nextScale > 1.01f) {
+            clampedOffset(offset + panChange, nextScale)
+        } else {
+            Offset.Zero
+        }
+    }
+
+    LaunchedEffect(resetRequest, isActive) {
+        if (isActive) {
+            scale = 1f
+            offset = Offset.Zero
+        }
+    }
+    LaunchedEffect(fitMode, isActive) {
+        if (isActive) {
+            scale = 1f
+            offset = Offset.Zero
+        }
+    }
+    LaunchedEffect(isActive, scale, gesturesEnabled) {
+        if (isActive) onZoomedStateChanged(gesturesEnabled && scale > 1.01f)
+    }
+    LaunchedEffect(file.absolutePath, scale, fitMode, isActive) {
+        highQualityDecode = false
+        if (!isActive) return@LaunchedEffect
+        val shouldSharpen = scale > 1.2f || fitMode == ImageFitMode.Original
+        if (shouldSharpen) {
+            delay(180)
+            highQualityDecode = true
+        }
+    }
+    LaunchedEffect(gesturesEnabled, isActive) {
+        if (!gesturesEnabled && isActive) {
+            scale = 1f
+            offset = Offset.Zero
+            onZoomedStateChanged(false)
+        }
+    }
+
+    val cropRatio = editRecipe.cropPreset.ratio
+    val imageColorFilter = editRecipe.toColorFilterOrNull()
     Box(
         modifier = Modifier
             .fillMaxSize()
             .background(Color.Black)
-            .clickable(
-                indication = null,
-                interactionSource = remember { MutableInteractionSource() }
-            ) { onTap() },
+            .onSizeChanged { containerSize = it }
+            .pointerInput(gesturesEnabled) {
+                if (gesturesEnabled) {
+                    detectTapGestures(
+                        onTap = { onTap() },
+                        onDoubleTap = {
+                            if (scale > 1.01f) {
+                                scale = 1f
+                                offset = Offset.Zero
+                            } else {
+                                scale = 2.5f
+                            }
+                        }
+                    )
+                }
+            }
+            // Keep single-finger horizontal drags available for pager swipes
+            // until the user is actually zoomed in.
+            .transformable(
+                state = transformState,
+                enabled = gesturesEnabled,
+                canPan = { scale > 1.01f }
+            ),
         contentAlignment = Alignment.Center
     ) {
-        AsyncImage(
-            model = ImageRequest.Builder(LocalContext.current)
-                .data(file)
-                .crossfade(true)
-                .build(),
-            contentDescription = file.name,
-            modifier = Modifier.fillMaxSize(),
-            contentScale = ContentScale.Fit
-        )
+        Box(
+            modifier = if (cropRatio != null) {
+                Modifier
+                    .fillMaxWidth()
+                    .aspectRatio(cropRatio)
+                    .clip(RoundedCornerShape(10.dp))
+            } else {
+                Modifier.fillMaxSize()
+            },
+            contentAlignment = Alignment.Center
+        ) {
+            AsyncImage(
+                model = ImageRequest.Builder(LocalContext.current)
+                    .data(file)
+                    .precision(if (highQualityDecode) Precision.EXACT else Precision.INEXACT)
+                    .size(
+                        if (highQualityDecode) {
+                            CoilSize.ORIGINAL
+                        } else {
+                            CoilSize(
+                                width = containerSize.width.coerceAtLeast(1),
+                                height = containerSize.height.coerceAtLeast(1)
+                            )
+                        }
+                    )
+                    .crossfade(!highQualityDecode)
+                    .build(),
+                contentDescription = file.name,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .graphicsLayer {
+                        val flipX = if (editRecipe.flipHorizontal) -1f else 1f
+                        val flipY = if (editRecipe.flipVertical) -1f else 1f
+                        scaleX = scale * flipX
+                        scaleY = scale * flipY
+                        translationX = offset.x
+                        translationY = offset.y
+                        rotationZ = editRecipe.normalizedQuarterTurns * 90f
+                    },
+                contentScale = fitMode.contentScale,
+                colorFilter = imageColorFilter
+            )
+        }
+        if (showHud) {
+            val zoomText = String.format(Locale.US, "%.1fx", scale)
+            Box(
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(end = 16.dp, bottom = 20.dp)
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(Color.Black.copy(alpha = 0.62f))
+                    .padding(horizontal = 10.dp, vertical = 6.dp)
+            ) {
+                Text(
+                    text = buildString {
+                        append(zoomText)
+                        append("  ·  ")
+                        append(fitMode.label)
+                        if (editRecipe.cropPreset != ImageCropPreset.Free) {
+                            append("  ·  ")
+                            append(editRecipe.cropPreset.label)
+                        }
+                        if (editRecipe.adjustmentPreset != ImageAdjustmentPreset.Custom) {
+                            append("  ·  ")
+                            append(editRecipe.adjustmentPreset.label)
+                        }
+                    },
+                    color = Color.White,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Medium
+                )
+            }
+        }
+    }
+    }
+
+@Composable
+private fun ImageEditorOverlay(
+    recipe: ImageEditRecipe,
+    cropOnly: Boolean,
+    canUndo: Boolean,
+    canRedo: Boolean,
+    onUndo: () -> Unit,
+    onRedo: () -> Unit,
+    onRotateLeft: () -> Unit,
+    onRotateRight: () -> Unit,
+    onFlipHorizontal: () -> Unit,
+    onFlipVertical: () -> Unit,
+    onCropPresetChange: (ImageCropPreset) -> Unit,
+    onPresetChange: (ImageAdjustmentPreset) -> Unit,
+    onBrightnessChange: (Float) -> Unit,
+    onContrastChange: (Float) -> Unit,
+    onSaturationChange: (Float) -> Unit,
+    onWarmthChange: (Float) -> Unit,
+    onHighlightsChange: (Float) -> Unit,
+    onShadowsChange: (Float) -> Unit,
+    onCancel: () -> Unit,
+    onApply: () -> Unit,
+    onSaveCopy: () -> Unit,
+    onReplaceOriginal: () -> Unit
+) {
+    var showSaveMenu by remember { mutableStateOf(false) }
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Black.copy(alpha = 0.24f))
+    ) {
+        Row(
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .fillMaxWidth()
+                .systemBarsPadding()
+                .padding(horizontal = 8.dp, vertical = 6.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            TextButton(onClick = onCancel) { Text("Cancel") }
+            Text(
+                text = if (cropOnly) "Crop" else "Edit",
+                color = Color.White,
+                fontWeight = FontWeight.SemiBold
+            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                TextButton(onClick = onApply) { Text("Apply") }
+                Box {
+                    IconButton(onClick = { showSaveMenu = true }) {
+                        Icon(Icons.Filled.MoreVert, contentDescription = "Save options", tint = Color.White)
+                    }
+                    DropdownMenu(
+                        expanded = showSaveMenu,
+                        onDismissRequest = { showSaveMenu = false }
+                    ) {
+                        DropdownMenuItem(
+                            text = { Text("Save Copy") },
+                            onClick = { showSaveMenu = false; onSaveCopy() }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Replace Original") },
+                            onClick = { showSaveMenu = false; onReplaceOriginal() }
+                        )
+                    }
+                }
+            }
+        }
+
+        Column(
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .fillMaxWidth()
+                .systemBarsPadding()
+                .padding(horizontal = 10.dp, vertical = 8.dp)
+                .clip(RoundedCornerShape(16.dp))
+                .background(Color.Black.copy(alpha = 0.72f))
+                .padding(horizontal = 10.dp, vertical = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                TextButton(onClick = onUndo, enabled = canUndo) { Text("Undo") }
+                TextButton(onClick = onRedo, enabled = canRedo) { Text("Redo") }
+                TextButton(onClick = onRotateLeft) { Text("Rotate -90°") }
+                TextButton(onClick = onRotateRight) { Text("Rotate +90°") }
+            }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                TextButton(onClick = onFlipHorizontal) {
+                    Text(if (recipe.flipHorizontal) "Unflip H" else "Flip H")
+                }
+                TextButton(onClick = onFlipVertical) {
+                    Text(if (recipe.flipVertical) "Unflip V" else "Flip V")
+                }
+            }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                ImageCropPreset.entries.forEach { preset ->
+                    TextButton(
+                        onClick = { onCropPresetChange(preset) },
+                        enabled = recipe.cropPreset != preset
+                    ) { Text(preset.label) }
+                }
+            }
+            if (!cropOnly) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    listOf(
+                        ImageAdjustmentPreset.Auto,
+                        ImageAdjustmentPreset.BlackWhite,
+                        ImageAdjustmentPreset.Vivid,
+                        ImageAdjustmentPreset.Soft
+                    ).forEach { preset ->
+                        TextButton(
+                            onClick = { onPresetChange(preset) },
+                            enabled = recipe.adjustmentPreset != preset
+                        ) { Text(preset.label) }
+                    }
+                }
+                Text(
+                    text = "Brightness ${(recipe.brightnessAdj * 100).toInt()}",
+                    color = Color.White.copy(alpha = 0.9f),
+                    fontSize = 12.sp
+                )
+                Slider(
+                    value = recipe.brightnessAdj,
+                    onValueChange = onBrightnessChange,
+                    valueRange = -0.5f..0.5f
+                )
+                Text(text = "Contrast ${String.format(Locale.US, "%.2f", recipe.contrastAdj)}", color = Color.White.copy(alpha = 0.9f), fontSize = 12.sp)
+                Slider(value = recipe.contrastAdj, onValueChange = onContrastChange, valueRange = 0.5f..1.6f)
+                Text(text = "Saturation ${String.format(Locale.US, "%.2f", recipe.saturationAdj)}", color = Color.White.copy(alpha = 0.9f), fontSize = 12.sp)
+                Slider(value = recipe.saturationAdj, onValueChange = onSaturationChange, valueRange = 0f..2f)
+                Text(text = "Warmth ${String.format(Locale.US, "%.2f", recipe.warmthAdj)}", color = Color.White.copy(alpha = 0.9f), fontSize = 12.sp)
+                Slider(value = recipe.warmthAdj, onValueChange = onWarmthChange, valueRange = -1f..1f)
+                Text(text = "Highlights ${String.format(Locale.US, "%.2f", recipe.highlightsAdj)}", color = Color.White.copy(alpha = 0.9f), fontSize = 12.sp)
+                Slider(value = recipe.highlightsAdj, onValueChange = onHighlightsChange, valueRange = -1f..1f)
+                Text(text = "Shadows ${String.format(Locale.US, "%.2f", recipe.shadowsAdj)}", color = Color.White.copy(alpha = 0.9f), fontSize = 12.sp)
+                Slider(value = recipe.shadowsAdj, onValueChange = onShadowsChange, valueRange = -1f..1f)
+            }
+        }
     }
 }
-
 private fun findLocalSubtitleFile(videoFile: File): File? {
     val parent = videoFile.parentFile ?: return null
     val subtitleFiles = parent.listFiles()
@@ -991,15 +1970,7 @@ private fun findLocalSubtitleFile(videoFile: File): File? {
 }
 
 private fun inferVideoMimeType(file: File): String? {
-    return when (file.extension.lowercase()) {
-        "mkv" -> MimeTypes.VIDEO_MATROSKA
-        "webm" -> MimeTypes.VIDEO_WEBM
-        "mp4", "m4v" -> MimeTypes.VIDEO_MP4
-        "mov" -> "video/quicktime"
-        "3gp" -> "video/3gpp"
-        "ts", "mts", "m2ts" -> MimeTypes.VIDEO_MP2T
-        else -> null
-    }
+    return FileUtils.getMimeTypeOrNull(file)?.takeIf { it.startsWith("video/") }
 }
 
 @OptIn(UnstableApi::class)
@@ -1019,7 +1990,7 @@ private fun VideoPage(
     val mediaUri = remember(file.absolutePath) { android.net.Uri.fromFile(file) }
     val smbDataSourceFactory = remember { SmbSeekableDataSourceFactory(context) }
     val mediaSourceFactory = remember(smbDataSourceFactory) {
-        ProgressiveMediaSource.Factory(smbDataSourceFactory)
+        DefaultMediaSourceFactory(smbDataSourceFactory)
     }
 
     // Use more generous buffer durations for files that may be coming from a

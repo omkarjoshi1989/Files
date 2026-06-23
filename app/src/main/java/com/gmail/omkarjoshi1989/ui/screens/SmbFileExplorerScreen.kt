@@ -1,5 +1,5 @@
 ﻿package com.gmail.omkarjoshi1989.ui.screens
-import android.os.Environment
+import android.content.Intent
 import android.util.Log
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -71,6 +71,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
 import com.gmail.omkarjoshi1989.model.CollectionType
 import com.gmail.omkarjoshi1989.model.SmbConnectionConfig
 import com.gmail.omkarjoshi1989.model.SmbRemoteItem
@@ -79,6 +80,8 @@ import com.gmail.omkarjoshi1989.util.SmbClientManager
 import com.gmail.omkarjoshi1989.util.SmbConnectionsManager
 import com.gmail.omkarjoshi1989.util.SmbStreamRegistry
 import com.gmail.omkarjoshi1989.util.SubtitleSidecarResolver
+import com.gmail.omkarjoshi1989.service.SmbDownloadService
+import com.gmail.omkarjoshi1989.service.SmbUploadService
 import com.gmail.omkarjoshi1989.viewmodel.ClipboardOperation
 import com.gmail.omkarjoshi1989.viewmodel.ClipboardRepository
 import kotlinx.coroutines.delay
@@ -105,6 +108,7 @@ fun SmbFileExplorerScreen(
     onNavigateToApplications: () -> Unit,
     onNavigateToSettings: () -> Unit,
     onNavigateToRecycleBin: () -> Unit,
+    onNavigateToBackgroundOperations: () -> Unit,
     onNavigateToCollection: ((CollectionType) -> Unit)?,
     onNavigateToSmbConnection: ((SmbConnectionConfig) -> Unit)?,
     onAddSmbConnection: () -> Unit,
@@ -173,6 +177,7 @@ fun SmbFileExplorerScreen(
                 },
                 onNavigateToApplications = { scope.launch { drawerState.close() }; onNavigateToApplications() },
                 onNavigateToRecycleBin  = { scope.launch { drawerState.close() }; onNavigateToRecycleBin() },
+                onNavigateToBackgroundOperations = { scope.launch { drawerState.close() }; onNavigateToBackgroundOperations() },
                 onNavigateToFavorites   = { scope.launch { drawerState.close() }; onNavigateToFavorites() },
                 onNavigateToSettings    = { scope.launch { drawerState.close() }; onNavigateToSettings() },
                 smbConnections = smbConnections,
@@ -207,33 +212,20 @@ fun SmbFileExplorerScreen(
                         ExtendedFloatingActionButton(
                             onClick = {
                                 val share = currentShare ?: return@ExtendedFloatingActionButton
+                                val localPaths = ArrayList(clipData.files.map { it.absolutePath })
+                                val uploadIntent = Intent(context, SmbUploadService::class.java).apply {
+                                    action = SmbUploadService.ACTION_START_UPLOAD
+                                    putExtra(SmbUploadService.EXTRA_CONNECTION_ID, connection.id)
+                                    putExtra(SmbUploadService.EXTRA_SHARE_NAME, share)
+                                    putExtra(SmbUploadService.EXTRA_REMOTE_DIRECTORY_PATH, currentPath)
+                                    putStringArrayListExtra(SmbUploadService.EXTRA_LOCAL_PATHS, localPaths)
+                                    putExtra(SmbUploadService.EXTRA_CLIPBOARD_OPERATION, clipData.operation.name)
+                                }
+                                ContextCompat.startForegroundService(context, uploadIntent)
+                                ClipboardRepository.clipboard.value = null
                                 scope.launch {
-                                    isOperating = true
-                                    val total = clipData.files.size
-                                    val opVerb = if (clipData.operation == ClipboardOperation.CUT) "Moving" else "Uploading"
-                                    operationMessage = "$opVerb 0 / $total..."
-                                    try {
-                                        SmbClientManager.pasteLocalClipboardToRemote(
-                                            config = connection,
-                                            shareName = share,
-                                            remoteDirectoryPath = currentPath,
-                                            clipboardData = clipData,
-                                            onProgress = { current, tot, fileName ->
-                                                operationMessage = "$opVerb $current / $tot - $fileName"
-                                            }
-                                        )
-                                        ClipboardRepository.clipboard.value = null
-                                        val doneVerb = if (clipData.operation == ClipboardOperation.CUT) "Moved" else "Pasted"
-                                        snackbarHostState.showSnackbar(
-                                            if (total == 1) "$doneVerb ${clipData.files[0].name}"
-                                            else "$doneVerb $total items"
-                                        )
-                                        refresh()
-                                    } catch (e: Exception) {
-                                        snackbarHostState.showSnackbar(e.localizedMessage ?: "Upload to SMB failed")
-                                    }
-                                    operationMessage = null
-                                    isOperating = false
+                                    val action = if (clipData.operation == ClipboardOperation.CUT) "move" else "upload"
+                                    snackbarHostState.showSnackbar("Background SMB $action started")
                                 }
                             },
                             icon = { Icon(Icons.Filled.ContentPaste, contentDescription = null) },
@@ -250,7 +242,7 @@ fun SmbFileExplorerScreen(
             bottomBar = {
                 if (isSelectionMode) {
                     val selectedItems = entries.filter { it.path in selectedPaths }
-                    val hasFiles = selectedItems.any { !it.isDirectory }
+                    val hasSelectedItems = selectedItems.isNotEmpty()
                     BottomAppBar(
                         containerColor = MaterialTheme.colorScheme.primaryContainer,
                         contentColor = MaterialTheme.colorScheme.onPrimaryContainer
@@ -260,24 +252,27 @@ fun SmbFileExplorerScreen(
                             horizontalArrangement = Arrangement.SpaceEvenly,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            if (hasFiles) {
+                            if (hasSelectedItems) {
                                 Column(
                                     horizontalAlignment = Alignment.CenterHorizontally,
                                     modifier = Modifier.clickable {
                                         val share = currentShare ?: return@clickable
+                                        val paths = ArrayList(selectedItems.map { it.path })
+                                        val names = ArrayList(selectedItems.map { it.name })
+                                        val dirs = BooleanArray(selectedItems.size) { idx -> selectedItems[idx].isDirectory }
+
+                                        val svcIntent = Intent(context, SmbDownloadService::class.java).apply {
+                                            action = SmbDownloadService.ACTION_START_DOWNLOAD
+                                            putExtra(SmbDownloadService.EXTRA_CONNECTION_ID, connection.id)
+                                            putExtra(SmbDownloadService.EXTRA_SHARE_NAME, share)
+                                            putStringArrayListExtra(SmbDownloadService.EXTRA_REMOTE_PATHS, paths)
+                                            putStringArrayListExtra(SmbDownloadService.EXTRA_REMOTE_NAMES, names)
+                                            putExtra(SmbDownloadService.EXTRA_REMOTE_IS_DIR, dirs)
+                                        }
+                                        ContextCompat.startForegroundService(context, svcIntent)
+                                        selectedPaths = emptySet()
                                         scope.launch {
-                                            isOperating = true
-                                            operationMessage = "Downloading selected file(s) from SMB..."
-                                            val downloadDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
-                                            var successCount = 0
-                                            selectedItems.filter { !it.isDirectory }.forEach { item ->
-                                                runCatching {
-                                                    SmbClientManager.downloadFile(connection, share, item.path, File(downloadDir, item.name))
-                                                    successCount++
-                                                }.onFailure { snackbarHostState.showSnackbar("Download failed: ${it.localizedMessage}") }
-                                            }
-                                            if (successCount > 0) snackbarHostState.showSnackbar("Downloaded $successCount file(s) to Downloads")
-                                            selectedPaths = emptySet(); operationMessage = null; isOperating = false
+                                            snackbarHostState.showSnackbar("SMB download started in background")
                                         }
                                     }.padding(8.dp)
                                 ) {
@@ -488,10 +483,10 @@ fun SmbFileExplorerScreen(
                                                             else null
                                                             if (FileUtils.isVideoFile(mediaTypeProbe))
                                                                 Log.d("SmbSubtitle", "Video=${item.name}, picked=${subtitleCandidate?.name ?: "<none>"}, share=$share, path=${item.path}")
+                                                            val isVideo = FileUtils.isVideoFile(mediaTypeProbe)
                                                             val isLargeMedia = item.size >= largeMediaThresholdBytes
-                                                            val isLargeVideo = isLargeMedia && FileUtils.isVideoFile(mediaTypeProbe)
                                                             val isLargeAudio = isLargeMedia && FileUtils.isAudioFile(mediaTypeProbe)
-                                                            if (isLargeVideo) {
+                                                            if (isVideo) {
                                                                 val streamMarkerFile = SmbStreamRegistry.registerVideoStream(context = context, connection = connection, shareName = share, remotePath = item.path, displayName = item.name)
                                                                 subtitleCandidate?.let { subtitleItem ->
                                                                     val subtitleFile = File(streamMarkerFile.parentFile ?: context.cacheDir, "${streamMarkerFile.nameWithoutExtension}.srt")
@@ -500,7 +495,7 @@ fun SmbFileExplorerScreen(
                                                                         Log.d("SmbSubtitle", "Downloaded sidecar ${subtitleItem.name} for stream marker ${streamMarkerFile.name}")
                                                                     }.onFailure { Log.w("SmbFileExplorer", "Failed to download SMB subtitle", it) }
                                                                 }
-                                                                onShowToast("Streaming video from SMB with random-seek support")
+                                                                onShowToast("Opening SMB video with seekable streaming")
                                                                 onOpenFile(streamMarkerFile); return@runCatching
                                                             }
                                                             if (!isLargeAudio) {

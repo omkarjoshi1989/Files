@@ -178,6 +178,7 @@ fun FileExplorerScreen(
     onNavigateToCollection: ((CollectionType) -> Unit)? = null,
     onNavigateToInternalStorage: (() -> Unit)? = null,
     onNavigateToGlobalSearch: (() -> Unit)? = null,
+    onNavigateToBackgroundOperations: (() -> Unit)? = null,
     onNavigateToSmbConnection: ((SmbConnectionConfig) -> Unit)? = null
 ) {
     val context = LocalContext.current
@@ -309,6 +310,10 @@ fun FileExplorerScreen(
                 onNavigateToRecycleBin = {
                     coroutineScope.launch { drawerState.close() }
                     onNavigateToRecycleBin()
+                },
+                onNavigateToBackgroundOperations = {
+                    coroutineScope.launch { drawerState.close() }
+                    onNavigateToBackgroundOperations?.invoke()
                 },
                 onNavigateToFavorites = {
                     coroutineScope.launch { drawerState.close() }
@@ -1077,6 +1082,7 @@ internal fun AppNavigationDrawer(
     onNavigateToCollection: (CollectionType) -> Unit,
     onNavigateToApplications: () -> Unit,
     onNavigateToRecycleBin: () -> Unit,
+    onNavigateToBackgroundOperations: () -> Unit,
     onNavigateToFavorites: () -> Unit,
     onNavigateToSettings: () -> Unit,
     smbConnections: List<SmbConnectionConfig>,
@@ -1164,6 +1170,15 @@ internal fun AppNavigationDrawer(
                     label = { Text("Add LAN/SMB Connection") },
                     selected = false,
                     onClick = onAddSmbConnection,
+                    modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding)
+                )
+            }
+            item {
+                NavigationDrawerItem(
+                    icon = { Icon(Icons.Filled.Download, contentDescription = null) },
+                    label = { Text("Background Operations") },
+                    selected = false,
+                    onClick = onNavigateToBackgroundOperations,
                     modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding)
                 )
             }

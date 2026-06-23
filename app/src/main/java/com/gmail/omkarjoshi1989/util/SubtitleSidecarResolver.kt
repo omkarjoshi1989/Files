@@ -2,6 +2,10 @@ package com.gmail.omkarjoshi1989.util
 
 object SubtitleSidecarResolver {
 
+    private val preferredSubtitleTokens = listOf(
+        "english", "eng", "en", "default", "sub", "subs", "caption", "captions"
+    )
+
     fun <T> findBestMatchingSrt(
         videoName: String,
         candidates: List<T>,
@@ -66,7 +70,28 @@ object SubtitleSidecarResolver {
             if (looseMatch != null) return looseMatch
         }
 
-        return if (srtCandidates.size == 1) srtCandidates.first() else null
+        // Final fallback: still pick an available subtitle deterministically.
+        // This guarantees playback can attach at least one sidecar when a folder
+        // has multiple unrelated .srt files.
+        return srtCandidates
+            .sortedWith(
+                compareByDescending<T> { subtitlePreferenceScore(nameSelector(it)) }
+                    .thenBy { normalizedBaseName(nameSelector(it)).length }
+                    .thenBy { nameSelector(it).lowercase() }
+            )
+            .firstOrNull()
+    }
+
+    private fun subtitlePreferenceScore(fileName: String): Int {
+        val name = normalizedBaseName(fileName)
+        var score = 0
+        preferredSubtitleTokens.forEachIndexed { index, token ->
+            if (name.contains(token)) {
+                // Earlier tokens are stronger preferences.
+                score += (preferredSubtitleTokens.size - index)
+            }
+        }
+        return score
     }
 
     private fun normalizedBaseName(fileName: String): String {

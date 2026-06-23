@@ -22,6 +22,7 @@ import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.StarBorder
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.*
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -61,6 +62,7 @@ fun GlobalSearchScreen(
     val focusRequester = remember { FocusRequester() }
     var recentFiles by remember { mutableStateOf<List<File>>(emptyList()) }
     var isLoadingRecent by remember { mutableStateOf(true) }
+    var isRefreshingRecent by remember { mutableStateOf(false) }
     var favoritePaths by remember { mutableStateOf(FavoritesManager.getFavorites(context)) }
 
     // Selection mode state
@@ -303,71 +305,87 @@ fun GlobalSearchScreen(
         ) {
             when {
                 query.trim().length < 2 && query.isEmpty() -> {
-                    // Show recent files before user starts typing
-                    when {
-                        isLoadingRecent -> {
-                            CircularProgressIndicator(modifier = Modifier.align(Alignment.Center))
-                        }
-                        recentFiles.isEmpty() -> {
-                            Column(
-                                modifier = Modifier.align(Alignment.Center),
-                                horizontalAlignment = Alignment.CenterHorizontally
-                            ) {
-                                Icon(
-                                    Icons.Filled.Search,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(64.dp),
-                                    tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)
-                                )
-                                Spacer(modifier = Modifier.height(16.dp))
-                                Text(
-                                    "Type to search all files",
-                                    style = MaterialTheme.typography.bodyLarge,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                                Text(
-                                    "Enter at least 2 characters",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
-                                )
+                    PullToRefreshBox(
+                        isRefreshing = isRefreshingRecent,
+                        onRefresh = {
+                            if (!isLoadingRecent && !isRefreshingRecent) {
+                                coroutineScope.launch {
+                                    isRefreshingRecent = true
+                                    recentFiles = withContext(Dispatchers.IO) {
+                                        FileUtils.getRecentMediaFiles(context, limit = 100)
+                                    }
+                                    isRefreshingRecent = false
+                                }
                             }
-                        }
-                        else -> {
-                            LazyColumn(modifier = Modifier.fillMaxSize()) {
-                                item {
+                        },
+                        modifier = Modifier.fillMaxSize()
+                    ) {
+                        // Show recent files before user starts typing
+                        when {
+                            isLoadingRecent -> {
+                                CircularProgressIndicator(modifier = Modifier.align(Alignment.Center))
+                            }
+                            recentFiles.isEmpty() -> {
+                                Column(
+                                    modifier = Modifier.align(Alignment.Center),
+                                    horizontalAlignment = Alignment.CenterHorizontally
+                                ) {
+                                    Icon(
+                                        Icons.Filled.Search,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(64.dp),
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)
+                                    )
+                                    Spacer(modifier = Modifier.height(16.dp))
                                     Text(
-                                        "Recent files",
-                                        style = MaterialTheme.typography.labelMedium,
-                                        fontWeight = FontWeight.SemiBold,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+                                        "Type to search all files",
+                                        style = MaterialTheme.typography.bodyLarge,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                    Text(
+                                        "Enter at least 2 characters",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
                                     )
                                 }
-                                items(recentFiles, key = { it.absolutePath }) { file ->
-                                    val isSelected = file.absolutePath in selectedPaths
-                                    GlobalSearchResultItem(
-                                        file = file,
-                                        isFavorite = file.absolutePath in favoritePaths,
-                                        isSelectionMode = isSelectionMode,
-                                        isSelected = isSelected,
-                                        onToggleFavorite = {
-                                            FavoritesManager.toggleFavorite(context, file.absolutePath)
-                                            favoritePaths = FavoritesManager.getFavorites(context)
-                                        },
-                                        onClick = {
-                                            if (isSelectionMode) {
-                                                selectedPaths = if (isSelected)
-                                                    selectedPaths - file.absolutePath
-                                                else selectedPaths + file.absolutePath
-                                            } else {
-                                                if (file.isDirectory) onOpenFolder(file)
-                                                else onOpenFile(file)
+                            }
+                            else -> {
+                                LazyColumn(modifier = Modifier.fillMaxSize()) {
+                                    item {
+                                        Text(
+                                            "Recent files",
+                                            style = MaterialTheme.typography.labelMedium,
+                                            fontWeight = FontWeight.SemiBold,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+                                        )
+                                    }
+                                    items(recentFiles, key = { it.absolutePath }) { file ->
+                                        val isSelected = file.absolutePath in selectedPaths
+                                        GlobalSearchResultItem(
+                                            file = file,
+                                            isFavorite = file.absolutePath in favoritePaths,
+                                            isSelectionMode = isSelectionMode,
+                                            isSelected = isSelected,
+                                            onToggleFavorite = {
+                                                FavoritesManager.toggleFavorite(context, file.absolutePath)
+                                                favoritePaths = FavoritesManager.getFavorites(context)
+                                            },
+                                            onClick = {
+                                                if (isSelectionMode) {
+                                                    selectedPaths = if (isSelected)
+                                                        selectedPaths - file.absolutePath
+                                                    else selectedPaths + file.absolutePath
+                                                } else {
+                                                    if (file.isDirectory) onOpenFolder(file)
+                                                    else onOpenFile(file)
+                                                }
+                                            },
+                                            onLongClick = {
+                                                selectedPaths = selectedPaths + file.absolutePath
                                             }
-                                        },
-                                        onLongClick = {
-                                            selectedPaths = selectedPaths + file.absolutePath
-                                        }
-                                    )
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -572,4 +590,3 @@ private fun searchFilesRecursive(
         }
     }
 }
-

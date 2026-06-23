@@ -10,6 +10,45 @@ import java.io.File
 
 object FileUtils {
 
+    private val extensionToMimeType = mapOf(
+        // Video
+        "mkv" to "video/x-matroska",
+        "mk3d" to "video/x-matroska",
+        "mka" to "audio/x-matroska",
+        "webm" to "video/webm",
+        "mp4" to "video/mp4",
+        "m4v" to "video/mp4",
+        "mov" to "video/quicktime",
+        "avi" to "video/x-msvideo",
+        "wmv" to "video/x-ms-wmv",
+        "flv" to "video/x-flv",
+        "3gp" to "video/3gpp",
+        "ts" to "video/mp2t",
+        "m2ts" to "video/mp2t",
+        "mts" to "video/mp2t",
+        // Audio
+        "mp3" to "audio/mpeg",
+        "wav" to "audio/wav",
+        "flac" to "audio/flac",
+        "aac" to "audio/aac",
+        "m4a" to "audio/mp4",
+        "ogg" to "audio/ogg",
+        "opus" to "audio/opus",
+        "amr" to "audio/amr",
+        // Images
+        "jpg" to "image/jpeg",
+        "jpeg" to "image/jpeg",
+        "png" to "image/png",
+        "gif" to "image/gif",
+        "bmp" to "image/bmp",
+        "webp" to "image/webp",
+        "heic" to "image/heic",
+        "heif" to "image/heif",
+        "svg" to "image/svg+xml",
+        // Documents
+        "pdf" to "application/pdf"
+    )
+
     private val imageExtensions = setOf(
         "jpg", "jpeg", "png", "gif", "bmp", "webp", "heic", "heif", "svg", "ico"
     )
@@ -126,10 +165,15 @@ object FileUtils {
         }
     }
 
-    fun getMimeType(file: File): String {
+    fun getMimeTypeOrNull(file: File): String? {
         val extension = file.extension.lowercase()
-        val mime = MimeTypeMap.getSingleton().getMimeTypeFromExtension(extension)
-        return mime ?: "application/octet-stream"
+        if (extension.isBlank()) return null
+        return extensionToMimeType[extension]
+            ?: MimeTypeMap.getSingleton().getMimeTypeFromExtension(extension)
+    }
+
+    fun getMimeType(file: File): String {
+        return getMimeTypeOrNull(file) ?: "application/octet-stream"
     }
 
     fun getOpenFileIntent(context: Context, file: File): Intent {

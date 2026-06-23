@@ -28,7 +28,11 @@ import kotlinx.coroutines.withContext
 import java.io.BufferedInputStream
 import java.io.Closeable
 import java.io.FileInputStream
+import java.io.InputStream
+import java.io.OutputStream
 object SmbClientManager {
+
+    private const val PROGRESS_EMIT_INTERVAL_MS = 2_000L
 
     interface RandomAccessReader : Closeable {
         val length: Long
@@ -128,6 +132,29 @@ object SmbClientManager {
         }
     }
 
+    /** Download one SMB entry (file or directory) to [localDest]. */
+    suspend fun downloadEntryToLocal(
+        config: SmbConnectionConfig,
+        shareName: String,
+        remotePath: String,
+        isDirectory: Boolean,
+        localDest: java.io.File,
+        onProgressPercent: (Int) -> Unit = {}
+    ) = withContext(Dispatchers.IO) {
+        withSession(config) { session ->
+            val share = session.connectShare(shareName)
+            if (share !is DiskShare) { share.close(); throw IllegalStateException("Not a disk share") }
+            share.use {
+                val normalized = normalizeRemotePath(remotePath)
+                if (isDirectory) {
+                    downloadDirectoryRecursive(share, normalized, localDest)
+                } else {
+                    downloadFileFromShare(share, normalized, localDest, onProgressPercent)
+                }
+            }
+        }
+    }
+
     /** Delete a file or directory (recursively) on the SMB share. */
     suspend fun deleteEntry(
         config: SmbConnectionConfig,
@@ -207,7 +234,8 @@ object SmbClientManager {
         shareName: String,
         remoteDirectoryPath: String,
         clipboardData: ClipboardData,
-        onProgress: (current: Int, total: Int, fileName: String) -> Unit = { _, _, _ -> }
+        onProgress: (current: Int, total: Int, fileName: String) -> Unit = { _, _, _ -> },
+        onEntryProgress: (fileName: String, percent: Int) -> Unit = { _, _ -> }
     ) = withContext(Dispatchers.IO) {
         withSession(config) { session ->
             val share = session.connectShare(shareName)
@@ -221,7 +249,11 @@ object SmbClientManager {
                 val total = clipboardData.files.size
                 clipboardData.files.forEachIndexed { index, localFile ->
                     val remoteTarget = joinRemotePath(remoteDir, localFile.name)
-                    uploadLocalEntry(share, localFile, remoteTarget)
+                    onEntryProgress(localFile.name, 0)
+                    uploadLocalEntry(share, localFile, remoteTarget) { percent ->
+                        onEntryProgress(localFile.name, percent)
+                    }
+                    onEntryProgress(localFile.name, 100)
                     // Delete source only after successful upload (CUT semantics)
                     if (clipboardData.operation == ClipboardOperation.CUT) {
                         if (localFile.isDirectory) localFile.deleteRecursively() else localFile.delete()
@@ -357,7 +389,12 @@ object SmbClientManager {
             com.hierynomus.msfscc.FileAttributes.FILE_ATTRIBUTE_DIRECTORY
         )
     }
-    private fun uploadLocalEntry(share: DiskShare, localFile: java.io.File, remotePath: String) {
+    private fun uploadLocalEntry(
+        share: DiskShare,
+        localFile: java.io.File,
+        remotePath: String,
+        onProgressPercent: (Int) -> Unit = {}
+    ) {
         if (localFile.isDirectory) {
             if (share.fileExists(remotePath) || share.folderExists(remotePath)) {
                 throw IllegalStateException("'${localFile.name}' already exists on SMB destination")
@@ -377,10 +414,107 @@ object SmbClientManager {
         remoteFile.use { smbFile ->
             BufferedInputStream(FileInputStream(localFile)).use { input ->
                 smbFile.outputStream.use { output ->
-                    input.copyTo(output)
+                    copyStreamWithPercent(
+                        input = input,
+                        output = output,
+                        totalBytes = localFile.length().coerceAtLeast(0L),
+                        onProgressPercent = onProgressPercent
+                    )
                 }
             }
         }
+    }
+
+    private fun downloadDirectoryRecursive(
+        share: DiskShare,
+        remoteDirectoryPath: String,
+        localDestDir: java.io.File
+    ) {
+        localDestDir.mkdirs()
+        val normalizedDir = normalizeRemotePath(remoteDirectoryPath)
+        share.list(normalizedDir)
+            .asSequence()
+            .filter { it.fileName != "." && it.fileName != ".." }
+            .forEach { info ->
+                val childRemotePath = joinRemotePath(normalizedDir, info.fileName)
+                val childLocal = java.io.File(localDestDir, info.fileName)
+                if (isDirectory(info)) {
+                    downloadDirectoryRecursive(share, childRemotePath, childLocal)
+                } else {
+                    downloadFileFromShare(share, childRemotePath, childLocal)
+                }
+            }
+    }
+
+    private fun downloadFileFromShare(
+        share: DiskShare,
+        remoteFilePath: String,
+        localDestFile: java.io.File,
+        onProgressPercent: (Int) -> Unit = {}
+    ) {
+        val remoteFile = share.openFile(
+            normalizeRemotePath(remoteFilePath),
+            setOf(AccessMask.GENERIC_READ),
+            setOf(com.hierynomus.msfscc.FileAttributes.FILE_ATTRIBUTE_NORMAL),
+            setOf(SMB2ShareAccess.FILE_SHARE_READ),
+            SMB2CreateDisposition.FILE_OPEN,
+            setOf(SMB2CreateOptions.FILE_NON_DIRECTORY_FILE)
+        )
+        remoteFile.use { smbFile ->
+            val totalBytes = runCatching { smbFile.fileInformation.standardInformation.endOfFile }
+                .getOrElse { 0L }
+            localDestFile.parentFile?.mkdirs()
+            smbFile.inputStream.use { input ->
+                localDestFile.outputStream().use { output ->
+                    copyStreamWithPercent(
+                        input = input,
+                        output = output,
+                        totalBytes = totalBytes,
+                        onProgressPercent = onProgressPercent
+                    )
+                }
+            }
+        }
+    }
+
+    private fun copyStreamWithPercent(
+        input: InputStream,
+        output: OutputStream,
+        totalBytes: Long,
+        onProgressPercent: (Int) -> Unit
+    ) {
+        if (totalBytes <= 0L) {
+            input.copyTo(output)
+            return
+        }
+
+        val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+        var bytesCopied = 0L
+        var lastPercent = -1
+        var lastEmitAt = 0L
+
+        while (true) {
+            val read = input.read(buffer)
+            if (read <= 0) break
+            output.write(buffer, 0, read)
+            bytesCopied += read
+
+            val now = System.currentTimeMillis()
+            val percent = ((bytesCopied * 100L) / totalBytes)
+                .toInt()
+                .coerceIn(0, 100)
+
+            val shouldEmit = percent != lastPercent &&
+                (now - lastEmitAt >= PROGRESS_EMIT_INTERVAL_MS || percent == 100)
+            if (shouldEmit) {
+                onProgressPercent(percent)
+                lastPercent = percent
+                lastEmitAt = now
+            }
+        }
+
+        output.flush()
+        if (lastPercent < 100) onProgressPercent(100)
     }
     private fun openRemoteFileForWrite(share: DiskShare, remotePath: String): File {
         return share.openFile(

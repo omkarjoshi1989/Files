@@ -155,6 +155,18 @@ class MediaViewerActivity : ComponentActivity() {
                                 screenKey++
                             }
                         },
+                        onFileAdded = { addedFile ->
+                            val currentList = mediaFiles
+                            if (currentList.none { it.absolutePath == addedFile.absolutePath }) {
+                                // Insert the saved copy right after the current file, then navigate to it
+                                val currentIdx = initialIndex.coerceIn(0, currentList.lastIndex)
+                                val newList = currentList.toMutableList().apply { add(currentIdx + 1, addedFile) }
+                                val newIndex = currentIdx + 1
+                                mediaFiles = newList
+                                initialIndex = newIndex
+                                screenKey++
+                            }
+                        },
                         onClose = { finish() }
                     )
                 }

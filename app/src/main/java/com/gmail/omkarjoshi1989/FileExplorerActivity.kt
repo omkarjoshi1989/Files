@@ -40,6 +40,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.gmail.omkarjoshi1989.model.CollectionType
 import com.gmail.omkarjoshi1989.model.SmbConnectionConfig
 import com.gmail.omkarjoshi1989.ui.screens.ApplicationsScreen
+import com.gmail.omkarjoshi1989.ui.screens.BackgroundOperationsScreen
 import com.gmail.omkarjoshi1989.ui.screens.FavoritesScreen
 import com.gmail.omkarjoshi1989.ui.screens.FileExplorerScreen
 import com.gmail.omkarjoshi1989.ui.screens.GlobalSearchScreen
@@ -60,10 +61,14 @@ import com.gmail.omkarjoshi1989.viewmodel.FileExplorerViewModel
 import com.gmail.omkarjoshi1989.viewmodel.ZipViewModel
 
 enum class Screen {
-    FILE_EXPLORER, FAVORITES, APPLICATIONS, SETTINGS, ZIP_VIEWER, RECYCLE_BIN, COLLECTION, GLOBAL_SEARCH, SMB_BROWSER
+    FILE_EXPLORER, FAVORITES, APPLICATIONS, SETTINGS, ZIP_VIEWER, RECYCLE_BIN, COLLECTION, GLOBAL_SEARCH, SMB_BROWSER, BACKGROUND_OPERATIONS
 }
 
 class FileExplorerActivity : ComponentActivity() {
+
+    companion object {
+        const val EXTRA_OPEN_BACKGROUND_OPERATIONS = "extra_open_background_operations"
+    }
 
     private var hasStoragePermission by mutableStateOf(false)
     private var isAuthenticated by mutableStateOf(false)
@@ -105,6 +110,7 @@ class FileExplorerActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        handleNavigationIntent(intent)
         enableEdgeToEdge()
         checkPermission()
         masterPasswordEnabled = SettingsManager.isMasterPasswordEnabled(this)
@@ -179,6 +185,7 @@ class FileExplorerActivity : ComponentActivity() {
                                 onNavigateToApplications = { currentScreen = Screen.APPLICATIONS },
                                 onNavigateToSettings = { currentScreen = Screen.SETTINGS },
                                 onNavigateToRecycleBin = { currentScreen = Screen.RECYCLE_BIN },
+                                onNavigateToBackgroundOperations = { currentScreen = Screen.BACKGROUND_OPERATIONS },
                                 onNavigateToCollection = { type ->
                                     currentCollection = type
                                     currentScreen = Screen.COLLECTION
@@ -220,6 +227,7 @@ class FileExplorerActivity : ComponentActivity() {
                                 onNavigateToApplications = { currentScreen = Screen.APPLICATIONS },
                                 onNavigateToSettings = { currentScreen = Screen.SETTINGS },
                                 onNavigateToRecycleBin = { currentScreen = Screen.RECYCLE_BIN },
+                                onNavigateToBackgroundOperations = { currentScreen = Screen.BACKGROUND_OPERATIONS },
                                 onNavigateToCollection = { type ->
                                     currentCollection = type
                                     // Stay on COLLECTION screen, LaunchedEffect will reset path
@@ -307,6 +315,7 @@ class FileExplorerActivity : ComponentActivity() {
                                     onNavigateToApplications = { currentScreen = Screen.APPLICATIONS },
                                     onNavigateToSettings = { currentScreen = Screen.SETTINGS },
                                     onNavigateToRecycleBin = { currentScreen = Screen.RECYCLE_BIN },
+                                    onNavigateToBackgroundOperations = { currentScreen = Screen.BACKGROUND_OPERATIONS },
                                     onNavigateToCollection = { type ->
                                         currentCollection = type
                                         currentScreen = Screen.COLLECTION
@@ -348,6 +357,12 @@ class FileExplorerActivity : ComponentActivity() {
                                 }
                             }
                         }
+                        Screen.BACKGROUND_OPERATIONS -> {
+                            BackHandler { currentScreen = Screen.FILE_EXPLORER }
+                            BackgroundOperationsScreen(
+                                onNavigateBack = { currentScreen = Screen.FILE_EXPLORER }
+                            )
+                        }
                     }
                 } else {
                     PermissionScreen(
@@ -356,6 +371,12 @@ class FileExplorerActivity : ComponentActivity() {
                 }
             }
         }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleNavigationIntent(intent)
     }
 
     override fun onDestroy() {
@@ -374,6 +395,12 @@ class FileExplorerActivity : ComponentActivity() {
             Environment.isExternalStorageManager()
         } else {
             true
+        }
+    }
+
+    private fun handleNavigationIntent(intent: Intent?) {
+        if (intent?.getBooleanExtra(EXTRA_OPEN_BACKGROUND_OPERATIONS, false) == true) {
+            currentScreen = Screen.BACKGROUND_OPERATIONS
         }
     }
 

@@ -125,7 +125,8 @@ object FileOperationNotificationHelper {
         val tapIntent = PendingIntent.getActivity(
             context, 0,
             Intent(context, FileExplorerActivity::class.java)
-                .addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP),
+                .putExtra(FileExplorerActivity.EXTRA_OPEN_BACKGROUND_OPERATIONS, true)
+                .addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
         return NotificationCompat.Builder(context, CHANNEL_ID)

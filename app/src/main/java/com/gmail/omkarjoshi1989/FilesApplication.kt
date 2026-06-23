@@ -1,6 +1,7 @@
 package com.gmail.omkarjoshi1989
 
 import android.app.Application
+import com.gmail.omkarjoshi1989.util.BackgroundOperationsManager
 import com.gmail.omkarjoshi1989.util.DirectoryCacheManager
 import com.gmail.omkarjoshi1989.util.FileOperationNotificationHelper
 import com.tom_roush.pdfbox.android.PDFBoxResourceLoader
@@ -16,5 +17,6 @@ class FilesApplication : Application() {
         // Must be done before any ViewModel is created so that cold-start
         // navigation to heavy folders (e.g. DCIM/Camera) is instant.
         DirectoryCacheManager.init(applicationContext)
+        BackgroundOperationsManager.init(applicationContext)
     }
 }

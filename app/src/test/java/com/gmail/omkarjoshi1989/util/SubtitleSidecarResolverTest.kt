@@ -1,7 +1,6 @@
 package com.gmail.omkarjoshi1989.util
 
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNull
 import org.junit.Test
 
 class SubtitleSidecarResolverTest {
@@ -58,7 +57,7 @@ class SubtitleSidecarResolverTest {
     }
 
     @Test
-    fun returns_null_when_multiple_unrelated_srt_files_exist() {
+    fun picks_deterministic_fallback_when_multiple_unrelated_srt_files_exist() {
         val candidates = listOf(
             "english.srt",
             "spanish.srt",
@@ -71,7 +70,7 @@ class SubtitleSidecarResolverTest {
             nameSelector = { it }
         )
 
-        assertNull(selected)
+        assertEquals("english.srt", selected)
     }
 
     @Test
