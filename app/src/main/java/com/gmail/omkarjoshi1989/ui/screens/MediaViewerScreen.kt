@@ -1038,7 +1038,7 @@ fun MediaViewerScreen(
                     isActive = isCurrentPage,
                     resetRequest = imageResetRequest,
                     fitMode = imageFitMode,
-                    showHud = showImageHud && !showImageEditor,
+                    showHud = showImageHud && !showImageEditor && !isImmersive,
                     editRecipe = if (showImageEditor && isCurrentPage) {
                         currentEditRecipe
                     } else {
