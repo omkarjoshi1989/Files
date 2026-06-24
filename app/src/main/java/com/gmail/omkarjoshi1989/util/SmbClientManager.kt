@@ -75,7 +75,7 @@ object SmbClientManager {
         )
 
         val fileLength = runCatching { smbFile.fileInformation.standardInformation.endOfFile }
-            .getOrElse { 0L }
+            .getOrElse { -1L }
 
         return object : RandomAccessReader {
             override val length: Long = fileLength

@@ -1949,23 +1949,13 @@ private fun findLocalSubtitleFile(videoFile: File): File? {
         it.extension.equals("srt", ignoreCase = true) &&
             it.nameWithoutExtension.equals(videoFile.nameWithoutExtension, ignoreCase = true)
     }
-    if (exactBasename != null) {
-        if (videoFile.name.startsWith("smb_open_") || videoFile.name.startsWith("smb_stream_")) {
-            Log.d("MediaViewerSubtitle", "Picked exact basename sidecar ${exactBasename.name} for ${videoFile.name}")
-        }
-        return exactBasename
-    }
+    if (exactBasename != null) return exactBasename
 
     val selected = SubtitleSidecarResolver.findBestMatchingSrt(
         videoName = videoFile.name,
         candidates = subtitleFiles,
         nameSelector = { it.name }
     )
-
-    if (videoFile.name.startsWith("smb_open_") || videoFile.name.startsWith("smb_stream_")) {
-        val srtNames = subtitleFiles.filter { it.extension.equals("srt", ignoreCase = true) }.map { it.name }
-        Log.d("MediaViewerSubtitle", "Resolver selected=${selected?.name ?: "<none>"} video=${videoFile.name} candidates=$srtNames")
-    }
     return selected
 }
 
@@ -2007,10 +1997,10 @@ private fun VideoPage(
             .setLoadControl(
                 DefaultLoadControl.Builder()
                     .setBufferDurationsMs(
-                        /* minBufferMs = */ if (isNetworkStream) 15_000 else 2_000,
-                        /* maxBufferMs = */ if (isNetworkStream) 60_000 else 10_000,
-                        /* bufferForPlaybackMs = */ if (isNetworkStream) 3_000 else 300,
-                        /* bufferForPlaybackAfterRebufferMs = */ if (isNetworkStream) 5_000 else 700
+                        /* minBufferMs = */ if (isNetworkStream) 20_000 else 2_000,
+                        /* maxBufferMs = */ if (isNetworkStream) 90_000 else 10_000,
+                        /* bufferForPlaybackMs = */ if (isNetworkStream) 4_000 else 300,
+                        /* bufferForPlaybackAfterRebufferMs = */ if (isNetworkStream) 8_000 else 700
                     )
                     .build()
             )
@@ -2062,16 +2052,20 @@ private fun VideoPage(
                     .setUri(mediaUri)
                     .setMimeType(inferVideoMimeType(file))
                     .apply {
-                        val localSubtitle = findLocalSubtitleFile(file)
-                        if (localSubtitle != null) {
-                            setSubtitleConfigurations(
-                                listOf(
-                                    MediaItem.SubtitleConfiguration.Builder(android.net.Uri.fromFile(localSubtitle))
-                                        .setMimeType(MimeTypes.APPLICATION_SUBRIP)
-                                        .setSelectionFlags(C.SELECTION_FLAG_DEFAULT)
-                                        .build()
+                        val isSmbVideoPlayback =
+                            file.name.startsWith("smb_open_") || file.name.startsWith("smb_stream_")
+                        if (!isSmbVideoPlayback) {
+                            val localSubtitle = findLocalSubtitleFile(file)
+                            if (localSubtitle != null) {
+                                setSubtitleConfigurations(
+                                    listOf(
+                                        MediaItem.SubtitleConfiguration.Builder(android.net.Uri.fromFile(localSubtitle))
+                                            .setMimeType(MimeTypes.APPLICATION_SUBRIP)
+                                            .setSelectionFlags(C.SELECTION_FLAG_DEFAULT)
+                                            .build()
+                                    )
                                 )
-                            )
+                            }
                         }
                     }
                     .build()

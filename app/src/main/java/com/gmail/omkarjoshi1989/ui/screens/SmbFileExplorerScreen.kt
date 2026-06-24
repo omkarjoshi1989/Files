@@ -1,6 +1,5 @@
 ﻿package com.gmail.omkarjoshi1989.ui.screens
 import android.content.Intent
-import android.util.Log
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
@@ -79,7 +78,6 @@ import com.gmail.omkarjoshi1989.util.FileUtils
 import com.gmail.omkarjoshi1989.util.SmbClientManager
 import com.gmail.omkarjoshi1989.util.SmbConnectionsManager
 import com.gmail.omkarjoshi1989.util.SmbStreamRegistry
-import com.gmail.omkarjoshi1989.util.SubtitleSidecarResolver
 import com.gmail.omkarjoshi1989.service.SmbDownloadService
 import com.gmail.omkarjoshi1989.service.SmbUploadService
 import com.gmail.omkarjoshi1989.viewmodel.ClipboardOperation
@@ -478,35 +476,16 @@ fun SmbFileExplorerScreen(
                                                         runCatching {
                                                             val cacheFile = File(context.cacheDir, "smb_open_${item.name}")
                                                             val mediaTypeProbe = File(item.name)
-                                                            val subtitleCandidate = if (FileUtils.isVideoFile(mediaTypeProbe))
-                                                                SubtitleSidecarResolver.findBestMatchingSrt(videoName = item.name, candidates = entries.filter { !it.isDirectory }, nameSelector = { it.name })
-                                                            else null
-                                                            if (FileUtils.isVideoFile(mediaTypeProbe))
-                                                                Log.d("SmbSubtitle", "Video=${item.name}, picked=${subtitleCandidate?.name ?: "<none>"}, share=$share, path=${item.path}")
                                                             val isVideo = FileUtils.isVideoFile(mediaTypeProbe)
                                                             val isLargeMedia = item.size >= largeMediaThresholdBytes
                                                             val isLargeAudio = isLargeMedia && FileUtils.isAudioFile(mediaTypeProbe)
                                                             if (isVideo) {
                                                                 val streamMarkerFile = SmbStreamRegistry.registerVideoStream(context = context, connection = connection, shareName = share, remotePath = item.path, displayName = item.name)
-                                                                subtitleCandidate?.let { subtitleItem ->
-                                                                    val subtitleFile = File(streamMarkerFile.parentFile ?: context.cacheDir, "${streamMarkerFile.nameWithoutExtension}.srt")
-                                                                    runCatching {
-                                                                        SmbClientManager.downloadFile(connection, share, subtitleItem.path, subtitleFile)
-                                                                        Log.d("SmbSubtitle", "Downloaded sidecar ${subtitleItem.name} for stream marker ${streamMarkerFile.name}")
-                                                                    }.onFailure { Log.w("SmbFileExplorer", "Failed to download SMB subtitle", it) }
-                                                                }
                                                                 onShowToast("Opening SMB video with seekable streaming")
                                                                 onOpenFile(streamMarkerFile); return@runCatching
                                                             }
                                                             if (!isLargeAudio) {
                                                                 SmbClientManager.downloadFile(connection, share, item.path, cacheFile)
-                                                                subtitleCandidate?.let { subtitleItem ->
-                                                                    val subtitleFile = File(cacheFile.parentFile ?: context.cacheDir, "${cacheFile.nameWithoutExtension}.srt")
-                                                                    runCatching {
-                                                                        SmbClientManager.downloadFile(connection, share, subtitleItem.path, subtitleFile)
-                                                                        Log.d("SmbSubtitle", "Downloaded sidecar ${subtitleItem.name} for cache ${cacheFile.name}")
-                                                                    }.onFailure { Log.w("SmbFileExplorer", "Failed to download SMB subtitle", it) }
-                                                                }
                                                                 onOpenFile(cacheFile); return@runCatching
                                                             }
                                                             val initialTargetBytes = minOf(initialStreamBufferBytes, item.size.coerceAtLeast(0L))

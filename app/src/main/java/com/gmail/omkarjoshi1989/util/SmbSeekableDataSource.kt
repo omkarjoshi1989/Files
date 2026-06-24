@@ -28,6 +28,8 @@ private class SmbSeekableDataSource(
 ) : DataSource {
 	companion object {
 		private const val READER_KEEP_ALIVE_MS = 8_000L
+		private const val READ_AHEAD_BUFFER_SIZE = 512 * 1024
+		private const val LARGE_DIRECT_READ_THRESHOLD = 128 * 1024
 		private val readerCloseExecutor = Executors.newSingleThreadScheduledExecutor { runnable ->
 			Thread(runnable, "SmbSeekableDataSourceCloser").apply { isDaemon = true }
 		}
@@ -38,6 +40,9 @@ private class SmbSeekableDataSource(
 	private var reader: SmbClientManager.RandomAccessReader? = null
 	private var readPosition: Long = 0L
 	private var bytesRemaining: Long = 0L
+	private var readAheadStart: Long = -1L
+	private var readAheadLength: Int = 0
+	private val readAheadBuffer = ByteArray(READ_AHEAD_BUFFER_SIZE)
 	private var pendingReaderClose: ScheduledFuture<*>? = null
 
 	override fun addTransferListener(transferListener: TransferListener) {
@@ -86,16 +91,17 @@ private class SmbSeekableDataSource(
 		currentUri = dataSpec.uri
 
 		val fileLength = smbReader.length
-		if (dataSpec.position > fileLength) {
+		if (fileLength >= 0L && dataSpec.position > fileLength) {
 			throw IOException("Seek position ${dataSpec.position} is beyond SMB file length $fileLength")
 		}
 
 		readPosition = dataSpec.position
-		bytesRemaining = if (dataSpec.length == C.LENGTH_UNSET.toLong()) {
-			fileLength - readPosition
-		} else {
-			minOf(dataSpec.length, fileLength - readPosition)
-		}.coerceAtLeast(0L)
+		bytesRemaining = when {
+			dataSpec.length != C.LENGTH_UNSET.toLong() -> dataSpec.length.coerceAtLeast(0L)
+			fileLength >= 0L -> (fileLength - readPosition).coerceAtLeast(0L)
+			else -> C.LENGTH_UNSET.toLong()
+		}
+		invalidateReadAhead()
 
 		return bytesRemaining
 	}
@@ -109,12 +115,24 @@ private class SmbSeekableDataSource(
 		val smbReader = reader ?: return C.RESULT_END_OF_INPUT
 		if (bytesRemaining == 0L) return C.RESULT_END_OF_INPUT
 
-		val toRead = minOf(length.toLong(), bytesRemaining).toInt()
-		val read = smbReader.readAt(readPosition, buffer, offset, toRead)
+		val toRead = when (bytesRemaining) {
+			C.LENGTH_UNSET.toLong() -> length
+			else -> minOf(length.toLong(), bytesRemaining).toInt()
+		}
+		if (toRead <= 0) return C.RESULT_END_OF_INPUT
+
+		val read = if (toRead >= LARGE_DIRECT_READ_THRESHOLD) {
+			// Large reads are streamed directly to the player buffer.
+			smbReader.readAt(readPosition, buffer, offset, toRead)
+		} else {
+			readFromReadAhead(smbReader, buffer, offset, toRead)
+		}
 		if (read <= 0) return C.RESULT_END_OF_INPUT
 
 		readPosition += read
-		bytesRemaining -= read
+		if (bytesRemaining != C.LENGTH_UNSET.toLong()) {
+			bytesRemaining -= read
+		}
 		return read
 	}
 
@@ -164,6 +182,7 @@ private class SmbSeekableDataSource(
 	private fun closeReaderImmediately() {
 		cancelPendingReaderClose()
 		closeActiveReader()
+		invalidateReadAhead()
 		currentUri = null
 	}
 
@@ -172,6 +191,41 @@ private class SmbSeekableDataSource(
 		val active = reader ?: return
 		reader = null
 		runCatching { active.close() }
+	}
+
+	@Synchronized
+	private fun readFromReadAhead(
+		smbReader: SmbClientManager.RandomAccessReader,
+		buffer: ByteArray,
+		offset: Int,
+		length: Int
+	): Int {
+		if (length <= 0) return 0
+
+		val cacheHit = readAheadStart >= 0L &&
+			readPosition >= readAheadStart &&
+			readPosition < readAheadStart + readAheadLength
+
+		if (!cacheHit) {
+			val warmupRead = smbReader.readAt(readPosition, readAheadBuffer, 0, readAheadBuffer.size)
+			if (warmupRead <= 0) return C.RESULT_END_OF_INPUT
+			readAheadStart = readPosition
+			readAheadLength = warmupRead
+		}
+
+		val available = (readAheadStart + readAheadLength - readPosition).toInt().coerceAtLeast(0)
+		if (available <= 0) return C.RESULT_END_OF_INPUT
+
+		val copyLength = minOf(length, available)
+		val sourceOffset = (readPosition - readAheadStart).toInt()
+		System.arraycopy(readAheadBuffer, sourceOffset, buffer, offset, copyLength)
+		return copyLength
+	}
+
+	@Synchronized
+	private fun invalidateReadAhead() {
+		readAheadStart = -1L
+		readAheadLength = 0
 	}
 }
 

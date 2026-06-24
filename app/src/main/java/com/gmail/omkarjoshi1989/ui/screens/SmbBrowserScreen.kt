@@ -17,8 +17,6 @@ import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentPaste
 import androidx.compose.material.icons.filled.Dns
-import androidx.compose.material.icons.filled.Folder
-import androidx.compose.material.icons.filled.InsertDriveFile
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExtendedFloatingActionButton
@@ -48,6 +46,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.gmail.omkarjoshi1989.model.SmbConnectionConfig
 import com.gmail.omkarjoshi1989.model.SmbRemoteItem
+import com.gmail.omkarjoshi1989.ui.components.SmbRemoteThumbnail
 import com.gmail.omkarjoshi1989.util.FileUtils
 import com.gmail.omkarjoshi1989.util.SmbClientManager
 import com.gmail.omkarjoshi1989.viewmodel.ClipboardOperation
@@ -239,10 +238,10 @@ fun SmbBrowserScreen(
                                         verticalAlignment = Alignment.CenterVertically,
                                         horizontalArrangement = Arrangement.spacedBy(12.dp)
                                     ) {
-                                        Icon(
-                                            imageVector = if (item.isDirectory) Icons.Filled.Folder else Icons.Filled.InsertDriveFile,
-                                            contentDescription = null,
-                                            tint = if (item.isDirectory) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                                        SmbRemoteThumbnail(
+                                            connection = connection,
+                                            shareName = currentShare!!,
+                                            item = item
                                         )
                                         Column(modifier = Modifier.weight(1f)) {
                                             Text(item.name, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -255,7 +254,7 @@ fun SmbBrowserScreen(
                                             }
                                         }
                                     }
-                                    HorizontalDivider(modifier = Modifier.padding(start = 52.dp))
+                                    HorizontalDivider(modifier = Modifier.padding(start = 68.dp))
                                 }
                             }
                         }
