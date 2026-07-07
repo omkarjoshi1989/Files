@@ -445,6 +445,23 @@ fun FileExplorerScreen(
                                 Text("Unzip", style = MaterialTheme.typography.labelSmall)
                             }
                         }
+                        // Rename — shown only when exactly one item is selected
+                        if (selectedPaths.size == 1) {
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                modifier = Modifier
+                                    .clickable {
+                                        val file = File(selectedPaths.first())
+                                        selectedFile = file
+                                        renameText = file.name
+                                        showRenameDialog = true
+                                    }
+                                    .padding(8.dp)
+                            ) {
+                                Icon(Icons.Filled.DriveFileRenameOutline, contentDescription = "Rename")
+                                Text("Rename", style = MaterialTheme.typography.labelSmall)
+                            }
+                        }
                         // Delete
                         Column(
                             horizontalAlignment = Alignment.CenterHorizontally,
@@ -884,7 +901,8 @@ fun FileExplorerScreen(
     }
 
     // ── Rename dialog ─────────────────────────────────────────────────────────
-    if (showRenameDialog && selectedFile != null) {
+    if (showRenameDialog && (selectedFile != null || selectedPaths.size == 1)) {
+        val targetFile = selectedFile ?: File(selectedPaths.first())
         AlertDialog(
             onDismissRequest = { showRenameDialog = false; selectedFile = null },
             title = { Text("Rename") },
@@ -899,7 +917,10 @@ fun FileExplorerScreen(
             },
             confirmButton = {
                 TextButton(onClick = {
-                    if (renameText.isNotBlank()) viewModel.renameFile(selectedFile!!, renameText)
+                    if (renameText.isNotBlank()) {
+                        viewModel.renameFile(targetFile, renameText)
+                        selectedPaths = emptySet()
+                    }
                     showRenameDialog = false; selectedFile = null
                 }) { Text("Rename") }
             },

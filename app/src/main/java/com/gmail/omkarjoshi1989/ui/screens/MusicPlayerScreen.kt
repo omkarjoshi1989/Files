@@ -91,6 +91,7 @@ import androidx.media3.session.SessionToken
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import com.gmail.omkarjoshi1989.service.MusicPlaybackService
+import com.gmail.omkarjoshi1989.ui.components.SquigglySlider
 import com.gmail.omkarjoshi1989.util.FileUtils
 import com.gmail.omkarjoshi1989.util.MusicResumeManager
 import com.google.common.util.concurrent.MoreExecutors
@@ -792,7 +793,7 @@ private fun MusicAudioPage(
                     Spacer(modifier = Modifier.height(16.dp))
 
                     // Seek bar
-                    Slider(
+                    SquigglySlider(
                         value = progressFraction,
                         onValueChange = { fraction ->
                             if (duration > 0) {
@@ -812,8 +813,8 @@ private fun MusicAudioPage(
                         },
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(24.dp),
-                        valueRange = 0f..1f
+                            .height(32.dp),
+                        isPlaying = isPlaying
                     )
 
                     // Time labels
@@ -905,7 +906,7 @@ private fun MusicAudioPage(
                 Spacer(modifier = Modifier.height(32.dp))
 
                 // Seek bar
-                Slider(
+                SquigglySlider(
                     value = progressFraction,
                     onValueChange = { fraction ->
                         if (duration > 0) {
@@ -925,8 +926,8 @@ private fun MusicAudioPage(
                     },
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(24.dp),
-                    valueRange = 0f..1f
+                        .height(32.dp),
+                    isPlaying = isPlaying
                 )
 
                 Spacer(modifier = Modifier.height(8.dp))
