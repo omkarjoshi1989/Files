@@ -40,15 +40,14 @@ object RecycleBinManager {
             val dest = File(binDir, id)
 
             val isDir = file.isDirectory
-            val success: Boolean = if (isDir) {
-                file.copyRecursively(dest, overwrite = true) && file.deleteRecursively()
-            } else {
-                file.copyTo(dest, overwrite = true)
-                file.delete()
-            }
+            // Optimization: Use renameTo() for atomic moves instead of copy+delete.
+            // This makes folder and large file deletion nearly instant.
+            val success = file.renameTo(dest)
 
             if (success) {
-                val size = if (isDir) calculateSize(dest) else dest.length()
+                // If it's a directory, we don't calculate size here to keep deletion instant.
+                // We'll use -1 as a placeholder for "needs calculation" or just show 0 until opened.
+                val size = if (isDir) -1L else dest.length()
                 val item = RecycleBinItem(
                     id = id,
                     originalPath = file.absolutePath,
@@ -92,12 +91,9 @@ object RecycleBinManager {
 
             dest.parentFile?.mkdirs()
 
-            val success: Boolean = if (src.isDirectory) {
-                src.copyRecursively(dest, overwrite = false) && src.deleteRecursively()
-            } else {
-                src.copyTo(dest, overwrite = false)
-                src.delete()
-            }
+            val isDir = src.isDirectory
+            // Optimization: Use renameTo() for atomic restore.
+            val success = src.renameTo(dest)
 
             if (success) removeItem(context, item.id)
             success

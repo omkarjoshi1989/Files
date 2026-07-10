@@ -724,33 +724,31 @@ class FileExplorerViewModel(application: Application) : AndroidViewModel(applica
         val total = files.size
         val context = getApplication<Application>()
         viewModelScope.launch {
-            _isLoading.value = true
-            _deleteProgress.value = DeleteProgressState(
-                currentFile = "Preparing…",
-                current     = 0,
-                total       = total
-            )
-            try {
-                withContext(Dispatchers.IO) {
-                    files.forEachIndexed { index, file ->
-                        _deleteProgress.value = DeleteProgressState(
-                            currentFile = file.name,
-                            current     = index + 1,
-                            total       = total
-                        )
-                        RecycleBinManager.moveToRecycleBin(context, file)
+            // Optimization: Remove UI blocking state. Refresh immediately so files "disappear".
+            clearSelection()
+            clearFolderMatchCache()
+            refreshFiles()
+
+            withContext(Dispatchers.IO) {
+                files.forEachIndexed { index, file ->
+                    val opId = "delete_${System.currentTimeMillis()}_${file.name}"
+                    BackgroundOperationsManager.start(
+                        id = opId,
+                        title = "Deleting item",
+                        detail = "In progress...",
+                        total = 1,
+                        fileName = file.name,
+                        sourcePath = file.absolutePath
+                    )
+                    val success = RecycleBinManager.moveToRecycleBin(context, file)
+                    if (success) {
+                        BackgroundOperationsManager.complete(opId, "Deleted", "Done", 1, 1, file.name)
+                    } else {
+                        BackgroundOperationsManager.fail(opId, "Delete failed", "Error", 0, 1, file.name)
                     }
                 }
-                _operationMessage.value = "Moved ${files.size} item(s) to Recycle Bin"
-                clearSelection()
-                clearFolderMatchCache()
-                refreshFiles()
-            } catch (e: Exception) {
-                _errorMessage.value = "Delete failed: ${e.message}"
-            } finally {
-                _deleteProgress.value = null
-                _isLoading.value = false
             }
+            _operationMessage.value = "Moved $total item(s) to Recycle Bin"
         }
     }
 
@@ -773,15 +771,11 @@ class FileExplorerViewModel(application: Application) : AndroidViewModel(applica
         _clipboard.value = null
 
         viewModelScope.launch {
-            _isLoading.value = true
-
-            // ── Show paste progress dialog immediately ────────────────────────
-            _pasteProgress.value = PasteProgressState(
-                operationVerb = opVerb,
-                currentFile   = "Preparing…",
-                current       = 0,
-                total         = total
-            )
+            // ── Refresh immediately for Move (Cut) so files "disappear" ──
+            if (isCut) {
+                clearFolderMatchCache()
+                refreshFiles()
+            }
 
             // ── initial progress notification ────────────────────────────────
             FileOperationNotificationHelper.showProgress(
@@ -811,21 +805,13 @@ class FileExplorerViewModel(application: Application) : AndroidViewModel(applica
                     }
 
                     clipData.files.forEachIndexed { index, sourceFile ->
-                        // ── per-file progress update ─────────────────────────
-                        _pasteProgress.value = PasteProgressState(
-                            operationVerb = opVerb,
-                            currentFile   = sourceFile.name,
-                            current       = index + 1,
-                            total         = total
-                        )
-
                         val operationId = operationIds[sourceFile.name]
                         if (operationId != null) {
                             BackgroundOperationsManager.progress(
                                 id = operationId,
                                 title = "$opVerb item",
                                 detail = "In progress...",
-                                current = 1,
+                                current = 0,
                                 total = 1,
                                 fileName = sourceFile.name,
                                 sourcePath = sourceFile.parentFile?.absolutePath.orEmpty(),
@@ -935,9 +921,6 @@ class FileExplorerViewModel(application: Application) : AndroidViewModel(applica
                     text  = errMsg
                 )
                 _errorMessage.value = "Paste failed: $errMsg"
-            } finally {
-                _pasteProgress.value = null   // dismiss in-app progress dialog
-                _isLoading.value = false
             }
         }
     }
@@ -946,15 +929,26 @@ class FileExplorerViewModel(application: Application) : AndroidViewModel(applica
 
     fun renameFile(file: File, newName: String) {
         viewModelScope.launch {
+            val opId = "rename_${System.currentTimeMillis()}_${file.name}"
+            BackgroundOperationsManager.start(
+                id = opId,
+                title = "Renaming item",
+                detail = "In progress...",
+                total = 1,
+                fileName = file.name,
+                sourcePath = file.absolutePath
+            )
             try {
                 withContext(Dispatchers.IO) {
                     val newFile = File(file.parent, newName)
                     if (newFile.exists()) throw IllegalStateException("A file with name '$newName' already exists")
                     if (!file.renameTo(newFile)) throw IllegalStateException("Rename failed")
                 }
+                BackgroundOperationsManager.complete(opId, "Rename complete", "Renamed to $newName", 1, 1, file.name)
                 _operationMessage.value = "Renamed to: $newName"
                 refreshFiles()
             } catch (e: Exception) {
+                BackgroundOperationsManager.fail(opId, "Rename failed", e.message ?: "Unknown error", 0, 1, file.name)
                 _errorMessage.value = "Rename failed: ${e.message}"
             }
         }
@@ -963,39 +957,50 @@ class FileExplorerViewModel(application: Application) : AndroidViewModel(applica
     fun deleteFile(file: File) {
         val context = getApplication<Application>()
         viewModelScope.launch {
-            _isLoading.value = true
-            _deleteProgress.value = DeleteProgressState(
-                currentFile = file.name,
-                current     = 1,
-                total       = 1
+            val opId = "delete_${System.currentTimeMillis()}_${file.name}"
+            BackgroundOperationsManager.start(
+                id = opId,
+                title = "Deleting item",
+                detail = "In progress...",
+                total = 1,
+                fileName = file.name,
+                sourcePath = file.absolutePath
             )
+            // Immediately refresh for instant feeling
+            refreshFiles()
+
             try {
                 withContext(Dispatchers.IO) {
                     val success = RecycleBinManager.moveToRecycleBin(context, file)
-                    if (!success) throw IllegalStateException("Move to Recycle Bin failed")
+                    if (success) {
+                        BackgroundOperationsManager.complete(opId, "Deleted", "Done", 1, 1, file.name)
+                    } else {
+                        BackgroundOperationsManager.fail(opId, "Delete failed", "Error", 0, 1, file.name)
+                        throw IllegalStateException("Move to Recycle Bin failed")
+                    }
                 }
                 _operationMessage.value = "Moved to Recycle Bin: ${file.name}"
-                refreshFiles()
             } catch (e: Exception) {
                 _errorMessage.value = "Delete failed: ${e.message}"
-            } finally {
-                _deleteProgress.value = null
-                _isLoading.value = false
             }
         }
     }
 
     fun createNewFolder(name: String) {
         viewModelScope.launch {
+            val opId = "mkdir_${System.currentTimeMillis()}_$name"
+            BackgroundOperationsManager.start(id = opId, title = "Creating folder", detail = "In progress...", total = 1, fileName = name)
             try {
                 withContext(Dispatchers.IO) {
                     val newDir = File(_currentPath.value, name)
                     if (newDir.exists()) throw IllegalStateException("'$name' already exists")
                     if (!newDir.mkdir()) throw IllegalStateException("Failed to create folder")
                 }
+                BackgroundOperationsManager.complete(opId, "Folder created", "Success", 1, 1, name)
                 _operationMessage.value = "Folder created: $name"
                 refreshFiles()
             } catch (e: Exception) {
+                BackgroundOperationsManager.fail(opId, "Create folder failed", e.message ?: "Unknown error", 0, 1, name)
                 _errorMessage.value = "Create folder failed: ${e.message}"
             }
         }
@@ -1003,15 +1008,19 @@ class FileExplorerViewModel(application: Application) : AndroidViewModel(applica
 
     fun createNewFile(name: String) {
         viewModelScope.launch {
+            val opId = "touch_${System.currentTimeMillis()}_$name"
+            BackgroundOperationsManager.start(id = opId, title = "Creating file", detail = "In progress...", total = 1, fileName = name)
             try {
                 withContext(Dispatchers.IO) {
                     val newFile = File(_currentPath.value, name)
                     if (newFile.exists()) throw IllegalStateException("'$name' already exists")
                     if (!newFile.createNewFile()) throw IllegalStateException("Failed to create file")
                 }
+                BackgroundOperationsManager.complete(opId, "File created", "Success", 1, 1, name)
                 _operationMessage.value = "File created: $name"
                 refreshFiles()
             } catch (e: Exception) {
+                BackgroundOperationsManager.fail(opId, "Create file failed", e.message ?: "Unknown error", 0, 1, name)
                 _errorMessage.value = "Create file failed: ${e.message}"
             }
         }
@@ -1021,22 +1030,32 @@ class FileExplorerViewModel(application: Application) : AndroidViewModel(applica
 
     fun zipFiles(files: List<File>, archiveName: String) {
         viewModelScope.launch {
-            _isLoading.value = true
+            val opId = "zip_${System.currentTimeMillis()}_$archiveName"
+            BackgroundOperationsManager.start(
+                id = opId,
+                title = "Zipping items",
+                detail = "In progress...",
+                total = files.size,
+                fileName = archiveName
+            )
             try {
                 withContext(Dispatchers.IO) {
                     val name = if (archiveName.endsWith(".zip", ignoreCase = true)) archiveName else "$archiveName.zip"
                     val outFile = File(_currentPath.value, name)
                     ZipOutputStream(BufferedOutputStream(FileOutputStream(outFile))).use { zos ->
-                        files.forEach { file -> addToZip(zos, file, file.name) }
+                        files.forEachIndexed { index, file ->
+                            BackgroundOperationsManager.progress(opId, "Zipping items", "Adding ${file.name}", index + 1, files.size, archiveName)
+                            addToZip(zos, file, file.name)
+                        }
                     }
                 }
+                BackgroundOperationsManager.complete(opId, "Zip complete", "Archive created", files.size, files.size, archiveName)
                 _operationMessage.value = "Created: $archiveName.zip"
                 clearSelection()
                 refreshFiles()
             } catch (e: Exception) {
+                BackgroundOperationsManager.fail(opId, "Zip failed", e.message ?: "Unknown error", 0, files.size, archiveName)
                 _errorMessage.value = "Zip failed: ${e.message}"
-            } finally {
-                _isLoading.value = false
             }
         }
     }
@@ -1054,19 +1073,20 @@ class FileExplorerViewModel(application: Application) : AndroidViewModel(applica
     fun unzipFile(zipFile: File) {
         val context = getApplication<Application>()
         viewModelScope.launch {
-            _isLoading.value = true
+            val opId = "unzip_${System.currentTimeMillis()}_${zipFile.name}"
+            BackgroundOperationsManager.start(
+                id = opId,
+                title = "Unzipping",
+                detail = "Preparing...",
+                total = 0,
+                fileName = zipFile.name
+            )
 
-            // Initial indeterminate progress — notification + in-app overlay
+            // Initial indeterminate progress notification
             FileOperationNotificationHelper.showProgress(
                 context,
                 title = "Unzipping ${zipFile.name}",
                 text  = "Preparing…",
-                current = 0,
-                total   = 0
-            )
-            _unzipProgress.value = UnzipProgressState(
-                archiveName  = zipFile.name,
-                currentEntry = "Preparing…",
                 current = 0,
                 total   = 0
             )
@@ -1081,15 +1101,11 @@ class FileExplorerViewModel(application: Application) : AndroidViewModel(applica
                             current = current,
                             total   = total
                         )
-                        _unzipProgress.value = UnzipProgressState(
-                            archiveName  = zipFile.name,
-                            currentEntry = entryName,
-                            current = current,
-                            total   = total
-                        )
+                        BackgroundOperationsManager.progress(opId, "Unzipping", entryName, current, total, zipFile.name)
                     }
                 }
 
+                BackgroundOperationsManager.complete(opId, "Unzip complete", "Done", 1, 1, zipFile.name)
                 FileOperationNotificationHelper.showCompletion(
                     context,
                     title = "Unzip complete",
@@ -1099,15 +1115,13 @@ class FileExplorerViewModel(application: Application) : AndroidViewModel(applica
                 refreshFiles()
             } catch (e: Exception) {
                 val errMsg = e.message ?: "Unknown error"
+                BackgroundOperationsManager.fail(opId, "Unzip failed", errMsg, 0, 1, zipFile.name)
                 FileOperationNotificationHelper.showError(
                     context,
                     title = "Unzip failed",
                     text  = errMsg
                 )
                 _errorMessage.value = "Unzip failed: $errMsg"
-            } finally {
-                _unzipProgress.value = null   // dismiss in-app overlay
-                _isLoading.value = false
             }
         }
     }
@@ -1117,7 +1131,14 @@ class FileExplorerViewModel(application: Application) : AndroidViewModel(applica
         val context = getApplication<Application>()
         val total   = files.size
         viewModelScope.launch {
-            _isLoading.value = true
+            val opId = "unzip_multi_${System.currentTimeMillis()}"
+            BackgroundOperationsManager.start(
+                id = opId,
+                title = "Unzipping items",
+                detail = "Preparing...",
+                total = total,
+                fileName = if (total == 1) files[0].name else "$total archives"
+            )
 
             // Initial notification
             FileOperationNotificationHelper.showProgress(
@@ -1126,14 +1147,6 @@ class FileExplorerViewModel(application: Application) : AndroidViewModel(applica
                 text    = "Preparing…",
                 current = 0,
                 total   = total
-            )
-            _unzipProgress.value = UnzipProgressState(
-                archiveName  = if (total == 1) files[0].name else "$total archives",
-                currentEntry = "Preparing…",
-                current      = 0,
-                total        = 0,
-                fileIndex    = 0,
-                totalFiles   = total
             )
 
             try {
@@ -1149,14 +1162,8 @@ class FileExplorerViewModel(application: Application) : AndroidViewModel(applica
                             current = fileIndex,
                             total   = total
                         )
-                        _unzipProgress.value = UnzipProgressState(
-                            archiveName  = zipFile.name,
-                            currentEntry = "Preparing…",
-                            current      = 0,
-                            total        = 0,
-                            fileIndex    = fileIndex,
-                            totalFiles   = total
-                        )
+                        BackgroundOperationsManager.progress(opId, "Unzipping items", zipFile.name, fileIndex + 1, total, zipFile.name)
+
                         extractZip(zipFile) { current, entryTotal, entryName ->
                             FileOperationNotificationHelper.showProgress(
                                 context,
@@ -1167,14 +1174,6 @@ class FileExplorerViewModel(application: Application) : AndroidViewModel(applica
                                 current = if (total == 1) current else fileIndex,
                                 total   = if (total == 1) entryTotal else total
                             )
-                            _unzipProgress.value = UnzipProgressState(
-                                archiveName  = zipFile.name,
-                                currentEntry = entryName,
-                                current      = current,
-                                total        = entryTotal,
-                                fileIndex    = fileIndex,
-                                totalFiles   = total
-                            )
                         }
                     }
                 }
@@ -1183,6 +1182,7 @@ class FileExplorerViewModel(application: Application) : AndroidViewModel(applica
                     "${files[0].name} extracted successfully"
                 else
                     "$total archives extracted successfully"
+                BackgroundOperationsManager.complete(opId, "Unzip complete", doneText, total, total, if (total == 1) files[0].name else "$total archives")
                 FileOperationNotificationHelper.showCompletion(
                     context,
                     title = "Unzip complete",
@@ -1195,15 +1195,13 @@ class FileExplorerViewModel(application: Application) : AndroidViewModel(applica
                 refreshFiles()
             } catch (e: Exception) {
                 val errMsg = e.message ?: "Unknown error"
+                BackgroundOperationsManager.fail(opId, "Unzip failed", errMsg, 0, total)
                 FileOperationNotificationHelper.showError(
                     context,
                     title = "Unzip failed",
                     text  = errMsg
                 )
                 _errorMessage.value = "Unzip failed: $errMsg"
-            } finally {
-                _unzipProgress.value = null   // dismiss in-app overlay
-                _isLoading.value = false
             }
         }
     }

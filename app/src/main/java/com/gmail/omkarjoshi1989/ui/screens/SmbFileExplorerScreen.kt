@@ -74,6 +74,7 @@ import androidx.core.content.ContextCompat
 import com.gmail.omkarjoshi1989.model.CollectionType
 import com.gmail.omkarjoshi1989.model.SmbConnectionConfig
 import com.gmail.omkarjoshi1989.model.SmbRemoteItem
+import com.gmail.omkarjoshi1989.util.BackgroundOperationsManager
 import com.gmail.omkarjoshi1989.util.FileUtils
 import com.gmail.omkarjoshi1989.util.SmbClientManager
 import com.gmail.omkarjoshi1989.util.SmbConnectionsManager
@@ -82,8 +83,10 @@ import com.gmail.omkarjoshi1989.service.SmbDownloadService
 import com.gmail.omkarjoshi1989.service.SmbUploadService
 import com.gmail.omkarjoshi1989.viewmodel.ClipboardOperation
 import com.gmail.omkarjoshi1989.viewmodel.ClipboardRepository
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.io.File
 /**
  * Full-featured SMB/LAN file explorer -- same drawer/top-bar style as the local explorer.
@@ -532,27 +535,54 @@ fun SmbFileExplorerScreen(
                     showDeleteDialog = false
                     val share = currentShare ?: return@TextButton
                     scope.launch {
-                        isOperating = true
+                        val opId = "smb_delete_${System.currentTimeMillis()}"
+                        BackgroundOperationsManager.start(
+                            id = opId,
+                            title = "Deleting from SMB",
+                            detail = "In progress...",
+                            total = toDelete.size,
+                            fileName = if (toDelete.size == 1) toDelete[0].name else "${toDelete.size} items"
+                        )
+                        // Optimistic UI: remove from list
+                        val deletedPaths = toDelete.map { it.path }.toSet()
+                        entries = entries.filterNot { it.path in deletedPaths }
+                        selectedPaths = emptySet()
+
                         val failedDeletes = mutableListOf<String>()
-                        toDelete.forEach { item ->
-                            runCatching {
-                                SmbClientManager.deleteEntry(connection, share, item.path, item.isDirectory)
-                            }.onFailure { err ->
-                                val reason = err.localizedMessage ?: "Unknown SMB error"
-                                failedDeletes += "${item.name}: $reason"
+                        withContext(Dispatchers.IO) {
+                            toDelete.forEachIndexed { index, item ->
+                                BackgroundOperationsManager.progress(opId, "Deleting from SMB", "Deleting ${item.name}", index + 1, toDelete.size, item.name)
+                                runCatching {
+                                    SmbClientManager.deleteEntry(connection, share, item.path, item.isDirectory)
+                                }.onFailure { err ->
+                                    val reason = err.localizedMessage ?: "Unknown SMB error"
+                                    failedDeletes += "${item.name}: $reason"
+                                }
                             }
                         }
-                        selectedPaths = emptySet()
+
                         val failCount = failedDeletes.size
                         val successCount = toDelete.size - failCount
                         val message = when {
-                            failCount == 0 && toDelete.size == 1 -> "Deleted ${toDelete[0].name}"
-                            failCount == 0 -> "Deleted ${toDelete.size} items"
-                            successCount == 0 -> "Delete failed: ${failedDeletes.first()}"
-                            else -> "Deleted $successCount, failed $failCount (first: ${failedDeletes.first()})"
+                            failCount == 0 && toDelete.size == 1 -> {
+                                BackgroundOperationsManager.complete(opId, "Deleted from SMB", toDelete[0].name, 1, 1, toDelete[0].name)
+                                "Deleted ${toDelete[0].name}"
+                            }
+                            failCount == 0 -> {
+                                BackgroundOperationsManager.complete(opId, "Deleted from SMB", "${toDelete.size} items", toDelete.size, toDelete.size)
+                                "Deleted ${toDelete.size} items"
+                            }
+                            successCount == 0 -> {
+                                BackgroundOperationsManager.fail(opId, "SMB Delete failed", failedDeletes.first(), 0, toDelete.size)
+                                "Delete failed: ${failedDeletes.first()}"
+                            }
+                            else -> {
+                                BackgroundOperationsManager.fail(opId, "SMB Delete partial success", "Deleted $successCount, failed $failCount", successCount, toDelete.size)
+                                "Deleted $successCount, failed $failCount (first: ${failedDeletes.first()})"
+                            }
                         }
                         snackbarHostState.showSnackbar(message)
-                        refresh(); isOperating = false
+                        refresh()
                     }
                 }) { Text("Delete", color = MaterialTheme.colorScheme.error) }
             },
@@ -612,19 +642,7 @@ fun SmbFileExplorerScreen(
         )
     }
     // -- "Please wait" overlay during SMB operations --
-    if (isOperating) {
-        AlertDialog(
-            onDismissRequest = {},
-            confirmButton = {},
-            title = { Text("Please wait") },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(12.dp), horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
-                    CircularProgressIndicator()
-                    Text(operationMessage ?: "Working on SMB operation...")
-                }
-            }
-        )
-    }
+    // Removed to allow background operations
 }
 // -- SMB breadcrumb navigation bar --
 @Composable

@@ -183,9 +183,6 @@ fun FileExplorerScreen(
 ) {
     val context = LocalContext.current
     val uiState by viewModel.uiState.collectAsState()
-    val unzipProgress by viewModel.unzipProgress.collectAsState()
-    val pasteProgress by viewModel.pasteProgress.collectAsState()
-    val deleteProgress by viewModel.deleteProgress.collectAsState()
     val snackbarHostState = remember { SnackbarHostState() }
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     val coroutineScope = rememberCoroutineScope()
@@ -1055,21 +1052,6 @@ fun FileExplorerScreen(
             },
             dismissButton = { TextButton(onClick = { showCreateFileDialog = false }) { Text("Cancel") } }
         )
-    }
-
-    // ── In-app unzip progress overlay ─────────────────────────────────────────
-    unzipProgress?.let { progress ->
-        UnzipProgressDialog(progress = progress)
-    }
-
-    // ── In-app paste progress overlay ─────────────────────────────────────────
-    pasteProgress?.let { progress ->
-        PasteProgressDialog(progress = progress)
-    }
-
-    // ── In-app delete progress overlay ────────────────────────────────────────
-    deleteProgress?.let { progress ->
-        DeleteProgressDialog(progress = progress)
     }
 
     if (showSmbDialog) {

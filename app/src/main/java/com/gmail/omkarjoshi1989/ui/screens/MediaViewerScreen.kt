@@ -122,7 +122,9 @@ import android.graphics.BitmapFactory
 import android.media.MediaMetadataRetriever
 import com.gmail.omkarjoshi1989.MediaViewerActivity
 import com.gmail.omkarjoshi1989.service.MusicPlaybackService
+import com.gmail.omkarjoshi1989.util.BackgroundOperationsManager
 import com.gmail.omkarjoshi1989.util.FileUtils
+import com.gmail.omkarjoshi1989.util.RecycleBinManager
 import com.google.common.util.concurrent.MoreExecutors
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -154,7 +156,6 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import com.gmail.omkarjoshi1989.util.FavoritesManager
-import com.gmail.omkarjoshi1989.util.RecycleBinManager
 import com.gmail.omkarjoshi1989.util.SmbSeekableDataSourceFactory
 import com.gmail.omkarjoshi1989.util.SubtitleSidecarResolver
 
@@ -542,7 +543,6 @@ fun MediaViewerScreen(
     var isCurrentImageZoomed by remember { mutableStateOf(false) }
     var imageResetRequest by remember { mutableIntStateOf(0) }
     var imageFitMode by remember { mutableStateOf(ImageFitMode.Fit) }
-    var showImageHud by remember { mutableStateOf(true) }
     var showImageEditor by remember { mutableStateOf(false) }
     var imageEditorMode by remember { mutableStateOf(ImageEditorMode.Full) }
     var appliedImageEdits by remember { mutableStateOf<Map<String, ImageEditRecipe>>(emptyMap()) }
@@ -1038,7 +1038,6 @@ fun MediaViewerScreen(
                     isActive = isCurrentPage,
                     resetRequest = imageResetRequest,
                     fitMode = imageFitMode,
-                    showHud = showImageHud && !showImageEditor && !isImmersive,
                     editRecipe = if (showImageEditor && isCurrentPage) {
                         currentEditRecipe
                     } else {
@@ -1184,93 +1183,12 @@ fun MediaViewerScreen(
                                         slideshowActive = !slideshowActive
                                     }
                                 )
-                                // ── Brightness ───────────────────────────────────
                                 DropdownMenuItem(
                                     text = { Text("Brightness") },
                                     leadingIcon = { Icon(Icons.Filled.BrightnessHigh, contentDescription = null) },
                                     onClick = {
                                         showImageMenu = false
                                         showBrightnessSheet = true
-                                    }
-                                )
-                                DropdownMenuItem(
-                                    text = { Text("Reset Zoom") },
-                                    onClick = {
-                                        showImageMenu = false
-                                        imageResetRequest++
-                                    }
-                                )
-                                DropdownMenuItem(
-                                    text = { Text("Edit") },
-                                    onClick = {
-                                        showImageMenu = false
-                                        val path = currentFile?.absolutePath ?: return@DropdownMenuItem
-                                        val base = appliedImageEdits[path] ?: ImageEditRecipe()
-                                        editHistory = listOf(base)
-                                        editHistoryIndex = 0
-                                        imageEditorMode = ImageEditorMode.Full
-                                        showImageEditor = true
-                                        isImmersive = false
-                                    }
-                                )
-                                DropdownMenuItem(
-                                    text = { Text("Crop Image") },
-                                    onClick = {
-                                        showImageMenu = false
-                                        val path = currentFile?.absolutePath ?: return@DropdownMenuItem
-                                        val base = appliedImageEdits[path] ?: ImageEditRecipe()
-                                        editHistory = listOf(base)
-                                        editHistoryIndex = 0
-                                        imageEditorMode = ImageEditorMode.CropOnly
-                                        showImageEditor = true
-                                        isImmersive = false
-                                    }
-                                )
-                                if (!((appliedImageEdits[currentFile?.absolutePath] ?: ImageEditRecipe()).isIdentity)) {
-                                    DropdownMenuItem(
-                                        text = { Text("Revert Applied Edits") },
-                                        onClick = {
-                                            showImageMenu = false
-                                            currentFile?.absolutePath?.let { path ->
-                                                appliedImageEdits = appliedImageEdits.toMutableMap().also { it.remove(path) }
-                                                imageResetRequest++
-                                            }
-                                        }
-                                    )
-                                }
-                                DropdownMenuItem(
-                                    text = { Text("Fit mode: ${imageFitMode.label}") },
-                                    onClick = { showImageMenu = false }
-                                )
-                                DropdownMenuItem(
-                                    text = { Text("Image Fit") },
-                                    onClick = {
-                                        showImageMenu = false
-                                        imageFitMode = ImageFitMode.Fit
-                                        imageResetRequest++
-                                    }
-                                )
-                                DropdownMenuItem(
-                                    text = { Text("Image Fill") },
-                                    onClick = {
-                                        showImageMenu = false
-                                        imageFitMode = ImageFitMode.Fill
-                                        imageResetRequest++
-                                    }
-                                )
-                                DropdownMenuItem(
-                                    text = { Text("Image Original Size") },
-                                    onClick = {
-                                        showImageMenu = false
-                                        imageFitMode = ImageFitMode.Original
-                                        imageResetRequest++
-                                    }
-                                )
-                                DropdownMenuItem(
-                                    text = { Text(if (showImageHud) "Hide Zoom HUD" else "Show Zoom HUD") },
-                                    onClick = {
-                                        showImageMenu = false
-                                        showImageHud = !showImageHud
                                     }
                                 )
                             }
@@ -1544,8 +1462,29 @@ fun MediaViewerScreen(
             confirmButton = {
                 TextButton(onClick = {
                     showDeleteDialog = false
-                    RecycleBinManager.moveToRecycleBin(context, fileToDelete)
-                    onFileDeleted(fileToDelete)
+                    val file = fileToDelete
+                    coroutineScope.launch {
+                        val opId = "media_delete_${System.currentTimeMillis()}_${file.name}"
+                        BackgroundOperationsManager.start(
+                            id = opId,
+                            title = "Deleting from viewer",
+                            detail = "In progress...",
+                            total = 1,
+                            fileName = file.name,
+                            sourcePath = file.absolutePath
+                        )
+                        // Optimistic UI: notify parent to remove from pager/list
+                        onFileDeleted(file)
+
+                        withContext(Dispatchers.IO) {
+                            val success = RecycleBinManager.moveToRecycleBin(context, file)
+                            if (success) {
+                                BackgroundOperationsManager.complete(opId, "Deleted", "Done", 1, 1, file.name)
+                            } else {
+                                BackgroundOperationsManager.fail(opId, "Delete failed", "Error moving to bin", 0, 1, file.name)
+                            }
+                        }
+                    }
                 }) {
                     Text("Delete", color = Color(0xFFD32F2F))
                 }
@@ -1617,7 +1556,6 @@ private fun ImagePage(
     isActive: Boolean,
     resetRequest: Int,
     fitMode: ImageFitMode,
-    showHud: Boolean,
     editRecipe: ImageEditRecipe,
     gesturesEnabled: Boolean,
     onZoomedStateChanged: (Boolean) -> Unit,
@@ -1754,38 +1692,8 @@ private fun ImagePage(
                 colorFilter = imageColorFilter
             )
         }
-        if (showHud) {
-            val zoomText = String.format(Locale.US, "%.1fx", scale)
-            Box(
-                modifier = Modifier
-                    .align(Alignment.BottomEnd)
-                    .padding(end = 16.dp, bottom = 20.dp)
-                    .clip(RoundedCornerShape(14.dp))
-                    .background(Color.Black.copy(alpha = 0.62f))
-                    .padding(horizontal = 10.dp, vertical = 6.dp)
-            ) {
-                Text(
-                    text = buildString {
-                        append(zoomText)
-                        append("  ·  ")
-                        append(fitMode.label)
-                        if (editRecipe.cropPreset != ImageCropPreset.Free) {
-                            append("  ·  ")
-                            append(editRecipe.cropPreset.label)
-                        }
-                        if (editRecipe.adjustmentPreset != ImageAdjustmentPreset.Custom) {
-                            append("  ·  ")
-                            append(editRecipe.adjustmentPreset.label)
-                        }
-                    },
-                    color = Color.White,
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.Medium
-                )
-            }
-        }
     }
-    }
+}
 
 @Composable
 private fun ImageEditorOverlay(

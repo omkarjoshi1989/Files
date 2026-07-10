@@ -47,6 +47,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.gmail.omkarjoshi1989.util.BackgroundOperationsManager
 import com.gmail.omkarjoshi1989.util.FileUtils
 import com.gmail.omkarjoshi1989.util.RecycleBinItem
 import com.gmail.omkarjoshi1989.util.RecycleBinManager
@@ -140,12 +141,27 @@ fun RecycleBinScreen(onNavigateBack: () -> Unit) {
                         item = item,
                         onRestore = {
                             scope.launch {
-                                isLoading = true
+                                val opId = "restore_${System.currentTimeMillis()}_${item.name}"
+                                BackgroundOperationsManager.start(
+                                    id = opId,
+                                    title = "Restoring item",
+                                    detail = "In progress...",
+                                    total = 1,
+                                    fileName = item.name,
+                                    sourcePath = item.originalPath
+                                )
+                                // Immediately reload to "remove" it from list (optimistic UI)
+                                items = items.filter { it.id != item.id }
+
                                 val success = withContext(Dispatchers.IO) {
                                     RecycleBinManager.restoreItem(context, item)
                                 }
+                                if (success) {
+                                    BackgroundOperationsManager.complete(opId, "Restored", "Done", 1, 1, item.name)
+                                } else {
+                                    BackgroundOperationsManager.fail(opId, "Restore failed", "Conflict or missing source", 0, 1, item.name)
+                                }
                                 reload()
-                                isLoading = false
                                 snackbarHostState.showSnackbar(
                                     if (success) "Restored: ${item.name}"
                                     else "Restore failed — a file already exists at the original location"
@@ -174,8 +190,24 @@ fun RecycleBinScreen(onNavigateBack: () -> Unit) {
             confirmButton = {
                 TextButton(onClick = {
                     scope.launch {
+                        val opId = "perm_delete_${System.currentTimeMillis()}_${target.name}"
+                        BackgroundOperationsManager.start(
+                            id = opId,
+                            title = "Deleting permanently",
+                            detail = "In progress...",
+                            total = 1,
+                            fileName = target.name
+                        )
+                        // Optimistic UI refresh
+                        items = items.filter { it.id != target.id }
+
                         withContext(Dispatchers.IO) {
-                            RecycleBinManager.permanentlyDelete(context, target)
+                            val success = RecycleBinManager.permanentlyDelete(context, target)
+                            if (success) {
+                                BackgroundOperationsManager.complete(opId, "Permanently deleted", "Done", 1, 1, target.name)
+                            } else {
+                                BackgroundOperationsManager.fail(opId, "Delete failed", "Error during deletion", 0, 1, target.name)
+                            }
                         }
                         reload()
                         snackbarHostState.showSnackbar("Permanently deleted: ${target.name}")
@@ -205,10 +237,25 @@ fun RecycleBinScreen(onNavigateBack: () -> Unit) {
             confirmButton = {
                 TextButton(onClick = {
                     scope.launch {
-                        isLoading = true
-                        withContext(Dispatchers.IO) { RecycleBinManager.emptyRecycleBin(context) }
+                        val itemsToProcess = items.toList()
+                        val opId = "empty_bin_${System.currentTimeMillis()}"
+                        BackgroundOperationsManager.start(
+                            id = opId,
+                            title = "Emptying Recycle Bin",
+                            detail = "Preparing...",
+                            total = itemsToProcess.size
+                        )
+                        // Optimistic UI: clear immediately
+                        items = emptyList()
+
+                        withContext(Dispatchers.IO) {
+                            itemsToProcess.forEachIndexed { index, item ->
+                                BackgroundOperationsManager.progress(opId, "Emptying Recycle Bin", "Deleting ${item.name}", index + 1, itemsToProcess.size)
+                                RecycleBinManager.permanentlyDelete(context, item)
+                            }
+                            BackgroundOperationsManager.complete(opId, "Recycle Bin emptied", "Success", itemsToProcess.size, itemsToProcess.size)
+                        }
                         reload()
-                        isLoading = false
                         snackbarHostState.showSnackbar("Recycle Bin emptied")
                     }
                     showEmptyDialog = false

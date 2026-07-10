@@ -50,6 +50,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.gmail.omkarjoshi1989.ui.components.FileThumbnail
 import com.gmail.omkarjoshi1989.ui.components.VideoProgressBar
+import com.gmail.omkarjoshi1989.util.BackgroundOperationsManager
 import com.gmail.omkarjoshi1989.util.FavoritesManager
 import com.gmail.omkarjoshi1989.util.FileUtils
 import com.gmail.omkarjoshi1989.util.RecycleBinManager
@@ -269,19 +270,32 @@ fun FavoritesScreen(
                 TextButton(onClick = {
                     val file = selectedFile!!
                     scope.launch {
+                        val opId = "delete_${System.currentTimeMillis()}_${file.name}"
+                        BackgroundOperationsManager.start(
+                            id = opId,
+                            title = "Deleting favorite",
+                            detail = "In progress...",
+                            total = 1,
+                            fileName = file.name,
+                            sourcePath = file.absolutePath
+                        )
+                        // Optimistic UI: remove from favorites immediately
+                        FavoritesManager.removeFavorite(context, file.absolutePath)
+                        favoritePaths = FavoritesManager.getFavorites(context)
+
                         try {
                             val success = withContext(Dispatchers.IO) {
                                 RecycleBinManager.moveToRecycleBin(context, file)
                             }
                             if (success) {
-                                // Remove from favorites
-                                FavoritesManager.removeFavorite(context, file.absolutePath)
-                                favoritePaths = FavoritesManager.getFavorites(context)
+                                BackgroundOperationsManager.complete(opId, "Deleted", "Done", 1, 1, file.name)
                                 snackbarHostState.showSnackbar("Moved to Recycle Bin: ${file.name}")
                             } else {
+                                BackgroundOperationsManager.fail(opId, "Delete failed", "Error moving to bin", 0, 1, file.name)
                                 snackbarHostState.showSnackbar("Move to Recycle Bin failed")
                             }
                         } catch (e: Exception) {
+                            BackgroundOperationsManager.fail(opId, "Delete failed", e.message ?: "Unknown error", 0, 1, file.name)
                             snackbarHostState.showSnackbar("Delete failed: ${e.message}")
                         }
                     }
