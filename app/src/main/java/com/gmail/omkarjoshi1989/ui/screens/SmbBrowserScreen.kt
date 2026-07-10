@@ -52,6 +52,7 @@ import com.gmail.omkarjoshi1989.util.SmbClientManager
 import com.gmail.omkarjoshi1989.viewmodel.ClipboardOperation
 import com.gmail.omkarjoshi1989.viewmodel.ClipboardRepository
 import kotlinx.coroutines.launch
+import java.io.File
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SmbBrowserScreen(
@@ -66,6 +67,7 @@ fun SmbBrowserScreen(
     var entries by remember(connection.id, currentShare, currentPath) { mutableStateOf<List<SmbRemoteItem>>(emptyList()) }
     var isLoading by remember { mutableStateOf(true) }
     var isPasting by remember { mutableStateOf(false) }
+    var overlappingFiles by remember { mutableStateOf<List<File>>(emptyList()) }
     var loadError by remember { mutableStateOf<String?>(null) }
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
@@ -113,27 +115,35 @@ fun SmbBrowserScreen(
                     ExtendedFloatingActionButton(
                         onClick = {
                             val share = currentShare ?: return@ExtendedFloatingActionButton
-                            scope.launch {
-                                isPasting = true
-                                try {
-                                    SmbClientManager.pasteLocalClipboardToRemote(
-                                        config = connection,
-                                        shareName = share,
-                                        remoteDirectoryPath = currentPath,
-                                        clipboardData = clipboardData
-                                    )
-                                    ClipboardRepository.clipboard.value = null
-                                    val message = if (clipboardData.files.size == 1) {
-                                        "Pasted ${clipboardData.files[0].name}"
-                                    } else {
-                                        "Pasted ${clipboardData.files.size} items"
+                            val overlaps = clipboardData.files.filter { localFile ->
+                                entries.any { remoteItem -> remoteItem.name == localFile.name }
+                            }
+                            if (overlaps.isNotEmpty()) {
+                                overlappingFiles = overlaps
+                            } else {
+                                scope.launch {
+                                    isPasting = true
+                                    try {
+                                        SmbClientManager.pasteLocalClipboardToRemote(
+                                            config = connection,
+                                            shareName = share,
+                                            remoteDirectoryPath = currentPath,
+                                            clipboardData = clipboardData,
+                                            overwrite = false
+                                        )
+                                        ClipboardRepository.clipboard.value = null
+                                        val message = if (clipboardData.files.size == 1) {
+                                            "Pasted ${clipboardData.files[0].name}"
+                                        } else {
+                                            "Pasted ${clipboardData.files.size} items"
+                                        }
+                                        snackbarHostState.showSnackbar(message)
+                                        refresh()
+                                    } catch (e: Exception) {
+                                        snackbarHostState.showSnackbar(e.localizedMessage ?: "Paste to SMB failed")
                                     }
-                                    snackbarHostState.showSnackbar(message)
-                                    refresh()
-                                } catch (e: Exception) {
-                                    snackbarHostState.showSnackbar(e.localizedMessage ?: "Paste to SMB failed")
+                                    isPasting = false
                                 }
-                                isPasting = false
                             }
                         },
                         icon = { Icon(Icons.Filled.ContentPaste, contentDescription = null) },
@@ -180,6 +190,68 @@ fun SmbBrowserScreen(
             )
         }
     ) { innerPadding ->
+        if (overlappingFiles.isNotEmpty()) {
+            PasteConfirmationDialog(
+                overlappingFiles = overlappingFiles,
+                onOverwrite = {
+                    val share = currentShare ?: return@PasteConfirmationDialog
+                    val clipboardData = clipboard ?: return@PasteConfirmationDialog
+                    scope.launch {
+                        overlappingFiles = emptyList()
+                        isPasting = true
+                        try {
+                            SmbClientManager.pasteLocalClipboardToRemote(
+                                config = connection,
+                                shareName = share,
+                                remoteDirectoryPath = currentPath,
+                                clipboardData = clipboardData,
+                                overwrite = true
+                            )
+                            ClipboardRepository.clipboard.value = null
+                            val message = if (clipboardData.files.size == 1) {
+                                "Pasted ${clipboardData.files[0].name}"
+                            } else {
+                                "Pasted ${clipboardData.files.size} items"
+                            }
+                            snackbarHostState.showSnackbar(message)
+                            refresh()
+                        } catch (e: Exception) {
+                            snackbarHostState.showSnackbar(e.localizedMessage ?: "Paste to SMB failed")
+                        }
+                        isPasting = false
+                    }
+                },
+                onSkip = {
+                    val share = currentShare ?: return@PasteConfirmationDialog
+                    val clipboardData = clipboard ?: return@PasteConfirmationDialog
+                    scope.launch {
+                        overlappingFiles = emptyList()
+                        isPasting = true
+                        try {
+                            SmbClientManager.pasteLocalClipboardToRemote(
+                                config = connection,
+                                shareName = share,
+                                remoteDirectoryPath = currentPath,
+                                clipboardData = clipboardData,
+                                overwrite = false
+                            )
+                            ClipboardRepository.clipboard.value = null
+                            val message = if (clipboardData.files.size == 1) {
+                                "Pasted ${clipboardData.files[0].name}"
+                            } else {
+                                "Pasted ${clipboardData.files.size} items"
+                            }
+                            snackbarHostState.showSnackbar(message)
+                            refresh()
+                        } catch (e: Exception) {
+                            snackbarHostState.showSnackbar(e.localizedMessage ?: "Paste to SMB failed")
+                        }
+                        isPasting = false
+                    }
+                },
+                onCancel = { overlappingFiles = emptyList() }
+            )
+        }
         Box(
             modifier = Modifier
                 .fillMaxSize()

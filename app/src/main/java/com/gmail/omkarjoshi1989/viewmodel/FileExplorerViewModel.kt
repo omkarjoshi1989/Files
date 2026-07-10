@@ -135,6 +135,7 @@ data class FileExplorerUiState(
     val isRefreshing: Boolean = false,
     val errorMessage: String? = null,
     val operationMessage: String? = null,
+    val overlappingFiles: List<File> = emptyList(),
     val isSelectionMode: Boolean = false,
     val selectedFilePaths: Set<String> = emptySet(),
     val searchQuery: String = "",
@@ -170,6 +171,7 @@ class FileExplorerViewModel(application: Application) : AndroidViewModel(applica
     private val _isRefreshing = MutableStateFlow(false)
     private val _errorMessage = MutableStateFlow<String?>(null)
     private val _operationMessage = MutableStateFlow<String?>(null)
+    private val _overlappingFiles = MutableStateFlow<List<File>>(emptyList())
     private val _fileListTrigger = MutableStateFlow(0L)
     private val _selectionState = MutableStateFlow(SelectionState())
     private val _searchQuery = MutableStateFlow("")
@@ -294,13 +296,14 @@ class FileExplorerViewModel(application: Application) : AndroidViewModel(applica
             NavState(path, hidden, sq, searchActive, sort)
         },
         _clipboard,
-        combine(_isLoading, _isLoadingMore, _isRefreshing, _selectionState) { l, lm, r, sel -> 
-            Triple(Triple(l, lm, r), sel, Unit) 
+        combine(_isLoading, _isLoadingMore, _isRefreshing, _selectionState, _overlappingFiles) { l, lm, r, sel, ov -> 
+            Triple(Triple(l, lm, r), sel to ov, Unit) 
         },
         combine(_errorMessage, _operationMessage) { err, op -> err to op },
         combine(_files, _viewMode) { files, vm -> files to vm }
     ) { navState, clipboard, loadingSel, errOp, filesVm ->
-        val (loadingStates, selState, _) = loadingSel
+        val (loadingStates, selStateOv, _) = loadingSel
+        val (selState, ovFiles) = selStateOv
         val (loading, loadingMore, refreshing) = loadingStates
         val (error, opMsg) = errOp
         val (files, viewMode) = filesVm
@@ -314,6 +317,7 @@ class FileExplorerViewModel(application: Application) : AndroidViewModel(applica
             isRefreshing = refreshing,
             errorMessage = error,
             operationMessage = opMsg,
+            overlappingFiles = ovFiles,
             isSelectionMode = selState.isMode,
             selectedFilePaths = selState.paths,
             searchQuery = navState.searchQuery,
@@ -761,6 +765,29 @@ class FileExplorerViewModel(application: Application) : AndroidViewModel(applica
 
     fun paste() {
         val clipData = _clipboard.value ?: return
+        val destDir = File(_currentPath.value)
+
+        // Detect overlaps
+        val overlapping = clipData.files.filter { source ->
+            File(destDir, source.name).exists() && source.absolutePath != File(destDir, source.name).absolutePath
+        }
+
+        if (overlapping.isNotEmpty()) {
+            _overlappingFiles.value = overlapping
+            return
+        }
+
+        performPaste(overwrite = false)
+    }
+
+    fun cancelPaste() {
+        _overlappingFiles.value = emptyList()
+    }
+
+    fun performPaste(overwrite: Boolean) {
+        val clipData = _clipboard.value ?: return
+        _overlappingFiles.value = emptyList()
+
         val context   = getApplication<Application>()
         val total     = clipData.files.size
         val isCut     = clipData.operation == ClipboardOperation.CUT
@@ -845,20 +872,36 @@ class FileExplorerViewModel(application: Application) : AndroidViewModel(applica
                             return@forEachIndexed
                         }
 
+                        if (!overwrite && destination.exists()) {
+                            if (operationId != null) {
+                                BackgroundOperationsManager.complete(
+                                    id = operationId,
+                                    title = "Skipped item",
+                                    detail = "File already exists",
+                                    current = 1,
+                                    total = 1,
+                                    fileName = sourceFile.name,
+                                    sourcePath = sourceFile.parentFile?.absolutePath.orEmpty(),
+                                    destinationPath = _currentPath.value
+                                )
+                            }
+                            return@forEachIndexed
+                        }
+
                         runCatching {
                             when (clipData.operation) {
                                 ClipboardOperation.COPY -> {
                                     if (sourceFile.isDirectory)
-                                        sourceFile.copyRecursively(destination, overwrite = false)
+                                        sourceFile.copyRecursively(destination, overwrite = overwrite)
                                     else
-                                        sourceFile.copyTo(destination, overwrite = false)
+                                        sourceFile.copyTo(destination, overwrite = overwrite)
                                 }
                                 ClipboardOperation.CUT -> {
                                     if (sourceFile.isDirectory) {
-                                        sourceFile.copyRecursively(destination, overwrite = false)
+                                        sourceFile.copyRecursively(destination, overwrite = overwrite)
                                         sourceFile.deleteRecursively()
                                     } else {
-                                        sourceFile.copyTo(destination, overwrite = false)
+                                        sourceFile.copyTo(destination, overwrite = overwrite)
                                         sourceFile.delete()
                                     }
                                 }

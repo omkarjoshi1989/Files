@@ -142,6 +142,7 @@ fun SmbFileExplorerScreen(
     var renameText by remember { mutableStateOf("") }
     var showCreateFolderDialog by remember { mutableStateOf(false) }
     var createFolderName by remember { mutableStateOf("") }
+    var overlappingFiles by remember { mutableStateOf<List<File>>(emptyList()) }
     val clipboard by ClipboardRepository.clipboard.collectAsState()
     fun refresh() {
         scope.launch {
@@ -213,20 +214,28 @@ fun SmbFileExplorerScreen(
                         ExtendedFloatingActionButton(
                             onClick = {
                                 val share = currentShare ?: return@ExtendedFloatingActionButton
-                                val localPaths = ArrayList(clipData.files.map { it.absolutePath })
-                                val uploadIntent = Intent(context, SmbUploadService::class.java).apply {
-                                    action = SmbUploadService.ACTION_START_UPLOAD
-                                    putExtra(SmbUploadService.EXTRA_CONNECTION_ID, connection.id)
-                                    putExtra(SmbUploadService.EXTRA_SHARE_NAME, share)
-                                    putExtra(SmbUploadService.EXTRA_REMOTE_DIRECTORY_PATH, currentPath)
-                                    putStringArrayListExtra(SmbUploadService.EXTRA_LOCAL_PATHS, localPaths)
-                                    putExtra(SmbUploadService.EXTRA_CLIPBOARD_OPERATION, clipData.operation.name)
+                                val overlaps = clipData.files.filter { localFile ->
+                                    entries.any { remoteItem -> remoteItem.name == localFile.name }
                                 }
-                                ContextCompat.startForegroundService(context, uploadIntent)
-                                ClipboardRepository.clipboard.value = null
-                                scope.launch {
-                                    val action = if (clipData.operation == ClipboardOperation.CUT) "move" else "upload"
-                                    snackbarHostState.showSnackbar("Background SMB $action started")
+                                if (overlaps.isNotEmpty()) {
+                                    overlappingFiles = overlaps
+                                } else {
+                                    val localPaths = ArrayList(clipData.files.map { it.absolutePath })
+                                    val uploadIntent = Intent(context, SmbUploadService::class.java).apply {
+                                        action = SmbUploadService.ACTION_START_UPLOAD
+                                        putExtra(SmbUploadService.EXTRA_CONNECTION_ID, connection.id)
+                                        putExtra(SmbUploadService.EXTRA_SHARE_NAME, share)
+                                        putExtra(SmbUploadService.EXTRA_REMOTE_DIRECTORY_PATH, currentPath)
+                                        putStringArrayListExtra(SmbUploadService.EXTRA_LOCAL_PATHS, localPaths)
+                                        putExtra(SmbUploadService.EXTRA_CLIPBOARD_OPERATION, clipData.operation.name)
+                                        putExtra(SmbUploadService.EXTRA_OVERWRITE, false)
+                                    }
+                                    ContextCompat.startForegroundService(context, uploadIntent)
+                                    ClipboardRepository.clipboard.value = null
+                                    scope.launch {
+                                        val action = if (clipData.operation == ClipboardOperation.CUT) "move" else "upload"
+                                        snackbarHostState.showSnackbar("Background SMB $action started")
+                                    }
                                 }
                             },
                             icon = { Icon(Icons.Filled.ContentPaste, contentDescription = null) },
@@ -617,6 +626,55 @@ fun SmbFileExplorerScreen(
         )
     }
     // -- Create folder dialog --
+    if (overlappingFiles.isNotEmpty()) {
+        PasteConfirmationDialog(
+            overlappingFiles = overlappingFiles,
+            onOverwrite = {
+                val share = currentShare ?: return@PasteConfirmationDialog
+                val clipData = clipboard ?: return@PasteConfirmationDialog
+                val localPaths = ArrayList(clipData.files.map { it.absolutePath })
+                val uploadIntent = Intent(context, SmbUploadService::class.java).apply {
+                    action = SmbUploadService.ACTION_START_UPLOAD
+                    putExtra(SmbUploadService.EXTRA_CONNECTION_ID, connection.id)
+                    putExtra(SmbUploadService.EXTRA_SHARE_NAME, share)
+                    putExtra(SmbUploadService.EXTRA_REMOTE_DIRECTORY_PATH, currentPath)
+                    putStringArrayListExtra(SmbUploadService.EXTRA_LOCAL_PATHS, localPaths)
+                    putExtra(SmbUploadService.EXTRA_CLIPBOARD_OPERATION, clipData.operation.name)
+                    putExtra(SmbUploadService.EXTRA_OVERWRITE, true)
+                }
+                ContextCompat.startForegroundService(context, uploadIntent)
+                ClipboardRepository.clipboard.value = null
+                overlappingFiles = emptyList()
+                scope.launch {
+                    val action = if (clipData.operation == ClipboardOperation.CUT) "move" else "upload"
+                    snackbarHostState.showSnackbar("Background SMB $action started")
+                }
+            },
+            onSkip = {
+                val share = currentShare ?: return@PasteConfirmationDialog
+                val clipData = clipboard ?: return@PasteConfirmationDialog
+                val localPaths = ArrayList(clipData.files.map { it.absolutePath })
+                val uploadIntent = Intent(context, SmbUploadService::class.java).apply {
+                    action = SmbUploadService.ACTION_START_UPLOAD
+                    putExtra(SmbUploadService.EXTRA_CONNECTION_ID, connection.id)
+                    putExtra(SmbUploadService.EXTRA_SHARE_NAME, share)
+                    putExtra(SmbUploadService.EXTRA_REMOTE_DIRECTORY_PATH, currentPath)
+                    putStringArrayListExtra(SmbUploadService.EXTRA_LOCAL_PATHS, localPaths)
+                    putExtra(SmbUploadService.EXTRA_CLIPBOARD_OPERATION, clipData.operation.name)
+                    putExtra(SmbUploadService.EXTRA_OVERWRITE, false)
+                }
+                ContextCompat.startForegroundService(context, uploadIntent)
+                ClipboardRepository.clipboard.value = null
+                overlappingFiles = emptyList()
+                scope.launch {
+                    val action = if (clipData.operation == ClipboardOperation.CUT) "move" else "upload"
+                    snackbarHostState.showSnackbar("Background SMB $action started")
+                }
+            },
+            onCancel = { overlappingFiles = emptyList() }
+        )
+    }
+
     if (showCreateFolderDialog) {
         AlertDialog(
             onDismissRequest = { showCreateFolderDialog = false },

@@ -234,6 +234,7 @@ object SmbClientManager {
         shareName: String,
         remoteDirectoryPath: String,
         clipboardData: ClipboardData,
+        overwrite: Boolean = false,
         onProgress: (current: Int, total: Int, fileName: String) -> Unit = { _, _, _ -> },
         onEntryProgress: (fileName: String, percent: Int) -> Unit = { _, _ -> }
     ) = withContext(Dispatchers.IO) {
@@ -250,7 +251,7 @@ object SmbClientManager {
                 clipboardData.files.forEachIndexed { index, localFile ->
                     val remoteTarget = joinRemotePath(remoteDir, localFile.name)
                     onEntryProgress(localFile.name, 0)
-                    uploadLocalEntry(share, localFile, remoteTarget) { percent ->
+                    uploadLocalEntry(share, localFile, remoteTarget, overwrite) { percent ->
                         onEntryProgress(localFile.name, percent)
                     }
                     onEntryProgress(localFile.name, 100)
@@ -393,24 +394,27 @@ object SmbClientManager {
         share: DiskShare,
         localFile: java.io.File,
         remotePath: String,
+        overwrite: Boolean = false,
         onProgressPercent: (Int) -> Unit = {}
     ) {
         if (localFile.isDirectory) {
-            if (share.fileExists(remotePath) || share.folderExists(remotePath)) {
+            if (!overwrite && (share.fileExists(remotePath) || share.folderExists(remotePath))) {
                 throw IllegalStateException("'${localFile.name}' already exists on SMB destination")
             }
-            share.mkdir(remotePath)
+            if (!share.folderExists(remotePath)) {
+                share.mkdir(remotePath)
+            }
             localFile.listFiles().orEmpty().forEach { child ->
-                uploadLocalEntry(share, child, joinRemotePath(remotePath, child.name))
+                uploadLocalEntry(share, child, joinRemotePath(remotePath, child.name), overwrite)
             }
             return
         }
-        if (share.fileExists(remotePath) || share.folderExists(remotePath)) {
+        if (!overwrite && (share.fileExists(remotePath) || share.folderExists(remotePath))) {
             throw IllegalStateException("'${localFile.name}' already exists on SMB destination")
         }
         val parent = remotePath.substringBeforeLast('\\', "")
         ensureDirectoryExists(share, parent)
-        val remoteFile = openRemoteFileForWrite(share, remotePath)
+        val remoteFile = openRemoteFileForWrite(share, remotePath, overwrite)
         remoteFile.use { smbFile ->
             BufferedInputStream(FileInputStream(localFile)).use { input ->
                 smbFile.outputStream.use { output ->
@@ -516,13 +520,13 @@ object SmbClientManager {
         output.flush()
         if (lastPercent < 100) onProgressPercent(100)
     }
-    private fun openRemoteFileForWrite(share: DiskShare, remotePath: String): File {
+    private fun openRemoteFileForWrite(share: DiskShare, remotePath: String, overwrite: Boolean = false): File {
         return share.openFile(
             remotePath,
             setOf(AccessMask.GENERIC_WRITE),
             setOf(FileAttributes.FILE_ATTRIBUTE_NORMAL),
             setOf(SMB2ShareAccess.FILE_SHARE_READ),
-            SMB2CreateDisposition.FILE_CREATE,
+            if (overwrite) SMB2CreateDisposition.FILE_OVERWRITE_IF else SMB2CreateDisposition.FILE_CREATE,
             setOf(SMB2CreateOptions.FILE_NON_DIRECTORY_FILE)
         )
     }

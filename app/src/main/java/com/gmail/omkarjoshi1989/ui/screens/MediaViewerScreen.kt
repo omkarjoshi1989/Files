@@ -1,5 +1,9 @@
 package com.gmail.omkarjoshi1989.ui.screens
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import android.net.Uri
+import android.content.Intent
 import android.app.Activity
 import android.database.ContentObserver
 import android.media.AudioManager
@@ -1945,45 +1949,84 @@ private fun VideoPage(
     var selectedAudioGroupIdx by remember { mutableIntStateOf(-1) }
     var selectedAudioTrackIdx by remember { mutableIntStateOf(-1) }
 
-    LaunchedEffect(isActive, mediaUri) {
+    var availableSubtitleTracks by remember { mutableStateOf<List<Triple<Int, Int, String>>>(emptyList()) }
+    var selectedSubtitleGroupIdx by remember { mutableIntStateOf(-1) }
+    var selectedSubtitleTrackIdx by remember { mutableIntStateOf(-1) }
+    var isSubtitlesDisabled by remember { mutableStateOf(false) }
+
+    var externalSubtitleUri by remember(file.absolutePath) { mutableStateOf<Uri?>(null) }
+    val subtitlePickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument(),
+        onResult = { uri ->
+            if (uri != null) {
+                // Persist permission for the picked URI so ExoPlayer can read it
+                try {
+                    context.contentResolver.takePersistableUriPermission(
+                        uri, Intent.FLAG_GRANT_READ_URI_PERMISSION
+                    )
+                } catch (_: Exception) {}
+                externalSubtitleUri = uri
+            }
+        }
+    )
+
+    LaunchedEffect(isActive, mediaUri, externalSubtitleUri) {
         if (isActive) {
-            if (exoPlayer.currentMediaItem == null) {
-                // Read saved position BEFORE prepare() so we can pass it directly
-                // to setMediaItem — this is the most reliable way to start ExoPlayer
-                // at a specific position (avoids a race between prepare() and seekTo()).
-                val startPosition = try {
-                    val prefs = context.getSharedPreferences("media_positions", Context.MODE_PRIVATE)
-                    prefs.getLong(file.absolutePath, 0L).coerceAtLeast(0L)
-                } catch (_: Exception) { 0L }
+            val currentMediaItem = exoPlayer.currentMediaItem
+            // If externalSubtitleUri changed, we need to re-prepare with the new sidecar.
+            // We check if it's already set to avoid infinite refresh loops.
+            val needsRebuild = externalSubtitleUri != null &&
+                    (currentMediaItem == null || currentMediaItem.localConfiguration?.subtitleConfigurations?.any { it.uri == externalSubtitleUri } != true)
+
+            if (currentMediaItem == null || needsRebuild) {
+                val resumePosition = if (needsRebuild) exoPlayer.currentPosition else {
+                    try {
+                        val prefs = context.getSharedPreferences("media_positions", Context.MODE_PRIVATE)
+                        prefs.getLong(file.absolutePath, 0L).coerceAtLeast(0L)
+                    } catch (_: Exception) { 0L }
+                }
 
                 val mediaItem = MediaItem.Builder()
                     .setUri(mediaUri)
                     .setMimeType(inferVideoMimeType(file))
                     .apply {
-                        val isSmbVideoPlayback =
-                            file.name.startsWith("smb_open_") || file.name.startsWith("smb_stream_")
-                        if (!isSmbVideoPlayback) {
-                            val localSubtitle = findLocalSubtitleFile(file)
-                            if (localSubtitle != null) {
-                                setSubtitleConfigurations(
-                                    listOf(
-                                        MediaItem.SubtitleConfiguration.Builder(android.net.Uri.fromFile(localSubtitle))
-                                            .setMimeType(MimeTypes.APPLICATION_SUBRIP)
-                                            .setSelectionFlags(C.SELECTION_FLAG_DEFAULT)
-                                            .build()
-                                    )
+                        if (externalSubtitleUri != null) {
+                            setSubtitleConfigurations(
+                                listOf(
+                                    MediaItem.SubtitleConfiguration.Builder(externalSubtitleUri!!)
+                                        .setMimeType(MimeTypes.APPLICATION_SUBRIP)
+                                        .setSelectionFlags(C.SELECTION_FLAG_DEFAULT)
+                                        .build()
                                 )
+                            )
+                        } else {
+                            val isSmbVideoPlayback =
+                                file.name.startsWith("smb_open_") || file.name.startsWith("smb_stream_")
+                            if (!isSmbVideoPlayback) {
+                                val localSubtitle = findLocalSubtitleFile(file)
+                                if (localSubtitle != null) {
+                                    setSubtitleConfigurations(
+                                        listOf(
+                                            MediaItem.SubtitleConfiguration.Builder(android.net.Uri.fromFile(localSubtitle))
+                                                .setMimeType(MimeTypes.APPLICATION_SUBRIP)
+                                                .setSelectionFlags(C.SELECTION_FLAG_DEFAULT)
+                                                .build()
+                                        )
+                                    )
+                                }
                             }
                         }
                     }
                     .build()
 
                 val mediaSource = mediaSourceFactory.createMediaSource(mediaItem)
-                exoPlayer.setMediaSource(mediaSource, startPosition)
+                exoPlayer.setMediaSource(mediaSource, resumePosition)
                 exoPlayer.prepare()
-                // Reset playback speed for the new file
-                exoPlayer.setPlaybackSpeed(1f)
-                currentSpeed = 1f
+                // Reset playback speed for the new file (unless just reloading for subtitles)
+                if (!needsRebuild) {
+                    exoPlayer.setPlaybackSpeed(1f)
+                    currentSpeed = 1f
+                }
             }
             // Explicitly pause music service when video page becomes active
             musicController?.let { mc ->
@@ -2204,6 +2247,49 @@ private fun VideoPage(
             onDispose { exoPlayer.removeListener(listener) }
         }
 
+        // ── Track available subtitle tracks for the settings menu ───────────
+        DisposableEffect(exoPlayer, file.absolutePath) {
+            val listener = object : Player.Listener {
+                override fun onTracksChanged(tracks: Tracks) {
+                    val newTracks = mutableListOf<Triple<Int, Int, String>>()
+                    var groupIdx = 0
+                    var selGroup = -1
+                    var selTrack = -1
+                    var anySelected = false
+
+                    for (group in tracks.groups) {
+                        if (group.type == C.TRACK_TYPE_TEXT) {
+                            for (trackIdx in 0 until group.length) {
+                                val format = group.getTrackFormat(trackIdx)
+                                val lang = format.language
+                                val lbl = format.label
+                                val displayName = when {
+                                    !lang.isNullOrBlank() && !lbl.isNullOrBlank() -> "$lang – $lbl"
+                                    !lang.isNullOrBlank() -> lang
+                                    !lbl.isNullOrBlank() -> lbl
+                                    else -> "Track ${newTracks.size + 1}"
+                                }
+                                newTracks.add(Triple(groupIdx, trackIdx, displayName))
+                                if (group.isTrackSelected(trackIdx)) {
+                                    selGroup = groupIdx
+                                    selTrack = trackIdx
+                                    anySelected = true
+                                }
+                            }
+                            groupIdx++
+                        }
+                    }
+                    availableSubtitleTracks = newTracks
+                    selectedSubtitleGroupIdx = selGroup
+                    selectedSubtitleTrackIdx = selTrack
+                    // If no track is selected, it means subtitles are disabled for this player
+                    isSubtitlesDisabled = !anySelected && tracks.groups.any { it.type == C.TRACK_TYPE_TEXT }
+                }
+            }
+            exoPlayer.addListener(listener)
+            onDispose { exoPlayer.removeListener(listener) }
+        }
+
     // ── PiP play/pause: expose the active exoPlayer directly so the broadcast
     //    receiver can call pause()/play() without going through Compose state.
     DisposableEffect(exoPlayer, isActive) {
@@ -2357,6 +2443,29 @@ private fun VideoPage(
                             }
                         }
 
+                        // ── Subtitles ──────────────────────────────────────────────────
+                        val subList = availableSubtitleTracks
+                        popup.menu.add(5, 400, 50, "— Subtitles —").also { it.isEnabled = false }
+                        popup.menu.setGroupCheckable(6, true, true)
+
+                        // Option 1: None
+                        popup.menu.add(6, 401, 51, "None").also { item ->
+                            item.isCheckable = true
+                            item.isChecked = isSubtitlesDisabled
+                        }
+
+                        // Option 2: Embedded/Sidecar tracks
+                        subList.forEachIndexed { idx, triple ->
+                            popup.menu.add(6, 402 + idx, 52 + idx, triple.third).also { item ->
+                                item.isCheckable = true
+                                item.isChecked = (triple.first == selectedSubtitleGroupIdx &&
+                                        triple.second == selectedSubtitleTrackIdx)
+                            }
+                        }
+
+                        // Option 3: Manual file picker
+                        popup.menu.add(7, 600, 100, "Select subtitle file...")
+
                         popup.setOnMenuItemClickListener { item ->
                             when {
                                 item.itemId == 0 -> {
@@ -2404,6 +2513,55 @@ private fun VideoPage(
                                             }
                                         } catch (_: Exception) {}
                                     }
+                                    true
+                                }
+                                item.itemId == 401 -> {
+                                    // Disable subtitles
+                                    try {
+                                        exoPlayer.trackSelectionParameters =
+                                            exoPlayer.trackSelectionParameters
+                                                .buildUpon()
+                                                .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true)
+                                                .build()
+                                        isSubtitlesDisabled = true
+                                        selectedSubtitleGroupIdx = -1
+                                        selectedSubtitleTrackIdx = -1
+                                    } catch (_: Exception) {}
+                                    true
+                                }
+                                item.itemId in 402..599 -> {
+                                    val info = subList.getOrNull(item.itemId - 402)
+                                    if (info != null) {
+                                        try {
+                                            val tracks = exoPlayer.currentTracks
+                                            var cnt = 0
+                                            for (group in tracks.groups) {
+                                                if (group.type == C.TRACK_TYPE_TEXT) {
+                                                    if (cnt == info.first) {
+                                                        exoPlayer.trackSelectionParameters =
+                                                            exoPlayer.trackSelectionParameters
+                                                                .buildUpon()
+                                                                .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
+                                                                .setOverrideForType(
+                                                                    TrackSelectionOverride(
+                                                                        group.mediaTrackGroup,
+                                                                        info.second
+                                                                    )
+                                                                ).build()
+                                                        selectedSubtitleGroupIdx = info.first
+                                                        selectedSubtitleTrackIdx = info.second
+                                                        isSubtitlesDisabled = false
+                                                        break
+                                                    }
+                                                    cnt++
+                                                }
+                                            }
+                                        } catch (_: Exception) {}
+                                    }
+                                    true
+                                }
+                                item.itemId == 600 -> {
+                                    subtitlePickerLauncher.launch(arrayOf("application/x-subrip", "text/plain", "*/*"))
                                     true
                                 }
                                 else -> false

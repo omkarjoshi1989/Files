@@ -1054,6 +1054,15 @@ fun FileExplorerScreen(
         )
     }
 
+    if (uiState.overlappingFiles.isNotEmpty()) {
+        PasteConfirmationDialog(
+            overlappingFiles = uiState.overlappingFiles,
+            onOverwrite = { viewModel.performPaste(overwrite = true) },
+            onSkip = { viewModel.performPaste(overwrite = false) },
+            onCancel = { viewModel.cancelPaste() }
+        )
+    }
+
     if (showSmbDialog) {
         SmbConnectionDialog(
             initialValue = editingSmbConnection,
@@ -1075,6 +1084,33 @@ fun FileExplorerScreen(
             }
         )
     }
+}
+
+@Composable
+fun PasteConfirmationDialog(
+    overlappingFiles: List<File>,
+    onOverwrite: () -> Unit,
+    onSkip: () -> Unit,
+    onCancel: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onCancel,
+        title = { Text("File Conflict") },
+        text = {
+            val fileList = overlappingFiles.take(3).joinToString("\n") { it.name }
+            val suffix = if (overlappingFiles.size > 3) "\n... and ${overlappingFiles.size - 3} more" else ""
+            Text("The following files already exist in the destination folder:\n\n$fileList$suffix\n\nWhat would you like to do?")
+        },
+        confirmButton = {
+            Row {
+                TextButton(onClick = onSkip) { Text("Skip") }
+                TextButton(onClick = onOverwrite) { Text("Overwrite") }
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onCancel) { Text("Cancel") }
+        }
+    )
 }
 
 @Composable

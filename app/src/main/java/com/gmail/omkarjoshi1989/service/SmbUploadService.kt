@@ -33,6 +33,7 @@ class SmbUploadService : Service() {
         const val EXTRA_REMOTE_DIRECTORY_PATH = "extra_remote_directory_path"
         const val EXTRA_LOCAL_PATHS = "extra_local_paths"
         const val EXTRA_CLIPBOARD_OPERATION = "extra_clipboard_operation"
+        const val EXTRA_OVERWRITE = "extra_overwrite"
 
         private const val CHANNEL_ID = "smb_uploads"
         private const val NOTIFICATION_ID = 9104
@@ -58,6 +59,7 @@ class SmbUploadService : Service() {
         val remoteDirectoryPath = intent.getStringExtra(EXTRA_REMOTE_DIRECTORY_PATH).orEmpty()
         val localPaths = intent.getStringArrayListExtra(EXTRA_LOCAL_PATHS).orEmpty()
         val opName = intent.getStringExtra(EXTRA_CLIPBOARD_OPERATION).orEmpty()
+        val overwrite = intent.getBooleanExtra(EXTRA_OVERWRITE, false)
         val operation = runCatching { ClipboardOperation.valueOf(opName) }.getOrElse { ClipboardOperation.COPY }
 
         val total = localPaths.size
@@ -116,6 +118,7 @@ class SmbUploadService : Service() {
                     shareName = shareName,
                     remoteDirectoryPath = remoteDirectoryPath,
                     clipboardData = clipData,
+                    overwrite = overwrite,
                     onProgress = { current, tot, fileName ->
                         notifyProgress("$opVerb $current / $tot", fileName, current, tot)
                     },
