@@ -148,6 +148,7 @@ import com.gmail.omkarjoshi1989.ui.components.VideoProgressBar
 import com.gmail.omkarjoshi1989.util.FavoritesManager
 import com.gmail.omkarjoshi1989.util.FileUtils
 import com.gmail.omkarjoshi1989.util.MusicResumeManager
+import com.gmail.omkarjoshi1989.util.VideoResumeManager
 import com.gmail.omkarjoshi1989.util.SmbConnectionsManager
 import com.gmail.omkarjoshi1989.viewmodel.ClipboardOperation
 import com.gmail.omkarjoshi1989.viewmodel.DeleteProgressState
@@ -686,6 +687,28 @@ fun FileExplorerScreen(
                             Icon(
                                 Icons.Filled.PlayCircle,
                                 contentDescription = "Music",
+                                tint = MaterialTheme.colorScheme.primary
+                            )
+                        }
+
+                        // Video player launcher
+                        IconButton(onClick = {
+                            val lastFile = VideoResumeManager.getLastFilePath(context)
+                            val lastFolder = VideoResumeManager.getLastFolderPath(context)
+                            if (lastFile != null && lastFolder != null && java.io.File(lastFile).exists()) {
+                                val intent = Intent(context, com.gmail.omkarjoshi1989.MediaViewerActivity::class.java).apply {
+                                    putExtra(com.gmail.omkarjoshi1989.MediaViewerActivity.EXTRA_FILE_PATH, lastFile)
+                                    putExtra(com.gmail.omkarjoshi1989.MediaViewerActivity.EXTRA_FOLDER_PATH, lastFolder)
+                                    putExtra(com.gmail.omkarjoshi1989.MediaViewerActivity.EXTRA_NO_AUTOPLAY, true)
+                                }
+                                context.startActivity(intent)
+                            } else {
+                                onShowToast("No recently played video")
+                            }
+                        }) {
+                            Icon(
+                                Icons.Filled.VideoLibrary,
+                                contentDescription = "Video",
                                 tint = MaterialTheme.colorScheme.primary
                             )
                         }

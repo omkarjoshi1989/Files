@@ -1065,6 +1065,7 @@ fun MediaViewerScreen(
                     onImmersiveChange = { immersive -> isImmersive = immersive },
                     isInPipMode = isInPipMode,
                     onEnterPip = onEnterPip,
+                    autoPlay = autoPlay,
                     onPlayingChanged = onVideoPlayingChanged
                 )
                                 FileUtils.isAudioFile(file) -> AudioPage(
@@ -1886,6 +1887,7 @@ private fun VideoPage(
     onImmersiveChange: (Boolean) -> Unit,
     isInPipMode: Boolean = false,
     onEnterPip: () -> Unit = {},
+    autoPlay: Boolean = true,
     onPlayingChanged: (Boolean) -> Unit = {}
 ) {
     val context = LocalContext.current
@@ -1940,6 +1942,7 @@ private fun VideoPage(
                 // Near or past end — clear so next open starts fresh
                 prefs.edit(commit = true) { remove(file.absolutePath) }
             }
+            com.gmail.omkarjoshi1989.util.VideoResumeManager.savePosition(context, pos)
         } catch (_: Exception) {}
     }
 
@@ -2032,8 +2035,16 @@ private fun VideoPage(
             musicController?.let { mc ->
                 if (mc.isPlaying) mc.pause()
             }
+
+            com.gmail.omkarjoshi1989.util.VideoResumeManager.saveLastPlayed(
+                context,
+                file.parentFile?.absolutePath ?: "",
+                file.absolutePath,
+                exoPlayer.currentPosition
+            )
+
             // Auto-play so resume position takes effect immediately
-            exoPlayer.playWhenReady = true
+            exoPlayer.playWhenReady = autoPlay
         } else {
             // Page is no longer active — save position and release resources.
             savePosition()
