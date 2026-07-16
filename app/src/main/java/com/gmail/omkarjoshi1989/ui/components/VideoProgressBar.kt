@@ -34,7 +34,7 @@ import java.io.File
  *
  * Renders nothing when:
  *  - no position has been saved for this file
- *  - the saved position corresponds to 0 % or 100 % (completed / never started)
+ *  - the saved position corresponds to 0 % (never started)
  *
  * Automatically re-reads the saved position whenever the screen resumes so the
  * bar updates immediately after the user returns from the video player.
@@ -67,6 +67,7 @@ fun VideoProgressBar(file: File) {
                     "media_positions", android.content.Context.MODE_PRIVATE
                 )
                 val pos = prefs.getLong(file.absolutePath, 0L)
+                if (pos == -1L) return@withContext 1.0f // 100% complete
                 if (pos <= 0L) return@withContext -1f
 
                 val retriever = MediaMetadataRetriever()
@@ -90,7 +91,7 @@ fun VideoProgressBar(file: File) {
     }
 
     val percent = (progressFraction * 100).toInt()
-    if (progressFraction > 0f && percent in 1..99) {
+    if (progressFraction > 0f && percent in 1..100) {
         Spacer(modifier = Modifier.height(4.dp))
         Row(
             verticalAlignment = Alignment.CenterVertically,

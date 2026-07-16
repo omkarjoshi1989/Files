@@ -37,6 +37,7 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Visibility
@@ -117,12 +118,13 @@ private class OpenPdfDocument(
 // ── Convenience overload for a plain File ───────────────────────────────────
 
 @Composable
-fun PdfViewerScreen(file: File, onClose: () -> Unit) {
+fun PdfViewerScreen(file: File, onClose: () -> Unit, onExport: () -> Unit) {
     PdfViewerScreen(
         displayName = file.name,
         pdfKey      = file.absolutePath,
         openPfd     = { ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY) },
-        onClose     = onClose
+        onClose     = onClose,
+        onExport    = onExport
     )
 }
 
@@ -134,6 +136,7 @@ fun PdfViewerScreen(
     displayName: String,
     openPfd: () -> ParcelFileDescriptor?,
     onClose: () -> Unit,
+    onExport: () -> Unit,
     /**
      * Stable unique key used to persist the scroll position across sessions.
      * Use the absolute file path for local files, or the URI string for content:// sources.
@@ -485,6 +488,11 @@ fun PdfViewerScreen(
                 navigationIcon = {
                     IconButton(onClick = onClose) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Close")
+                    }
+                },
+                actions = {
+                    IconButton(onClick = onExport) {
+                        Icon(Icons.Default.Download, contentDescription = "Export")
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(

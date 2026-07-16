@@ -1649,7 +1649,7 @@ fun FileListItem(
                                 val page  = prefs.getInt("${prefKey}_p", -1)
                                 val total = prefs.getInt("${prefKey}_total", 0)
                                 if (total <= 0 || page < 0) null
-                                else ((page + 1) * 100 / total).coerceIn(1, 99)
+                                else ((page + 1) * 100 / total).coerceIn(1, 100)
                             }
                         }
                         pdfPercent?.let { pct ->

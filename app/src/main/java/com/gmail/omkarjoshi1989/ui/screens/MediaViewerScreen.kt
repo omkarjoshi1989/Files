@@ -27,9 +27,11 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -48,10 +50,14 @@ import androidx.compose.material.icons.filled.BrightnessHigh
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Pause
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.PictureInPictureAlt
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Repeat
 import androidx.compose.material.icons.filled.RepeatOne
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SkipPrevious
 import androidx.compose.foundation.shape.CircleShape
@@ -1939,8 +1945,8 @@ private fun VideoPage(
             if (pos > 0L && (dur <= 0L || pos < dur - 3_000L)) {
                 prefs.edit(commit = true) { putLong(file.absolutePath, pos) }
             } else if (pos > 0L) {
-                // Near or past end — clear so next open starts fresh
-                prefs.edit(commit = true) { remove(file.absolutePath) }
+                // Near or past end — save -1L to indicate completed
+                prefs.edit(commit = true) { putLong(file.absolutePath, -1L) }
             }
             com.gmail.omkarjoshi1989.util.VideoResumeManager.savePosition(context, pos)
         } catch (_: Exception) {}
@@ -2064,7 +2070,8 @@ private fun VideoPage(
                             "media_positions",
                             Context.MODE_PRIVATE
                         )
-                        prefs.edit(commit = true) { remove(file.absolutePath) }
+                        // Save -1L to indicate completed
+                        prefs.edit(commit = true) { putLong(file.absolutePath, -1L) }
                     } catch (_: Exception) {}
                 }
             }
@@ -2340,6 +2347,7 @@ private fun VideoPage(
         var playerViewRef by remember { mutableStateOf<PlayerView?>(null) }
         var widthPx by remember { mutableIntStateOf(0) }
         var speedBoostActive by remember { mutableStateOf(false) }
+        var showVideoSettings by remember { mutableStateOf(false) }
 
         // ── Background playback toggle (configured in Settings screen) ──
         val backgroundPlaybackEnabled = remember(context) {
@@ -2419,166 +2427,8 @@ private fun VideoPage(
                     val settingsBtn = playerView.findViewById<android.view.View>(
                         androidx.media3.ui.R.id.exo_settings
                     )
-                    settingsBtn?.setOnClickListener { anchorView ->
-                        val popup = android.widget.PopupMenu(anchorView.context, anchorView)
-
-                        // ── Picture in Picture ────────────────────────────────────────
-                        popup.menu.add(0, 0, 0, "Picture in Picture")
-
-                        // ── Share ─────────────────────────────────────────────────────
-                        popup.menu.add(0, 500, 1, "Share")
-
-                        // ── Playback Speed ────────────────────────────────────────────
-                        popup.menu.add(1, 1, 2, "— Playback Speed —").also { it.isEnabled = false }
-                        val speeds = listOf(0.5f, 0.75f, 1f, 1.25f, 1.5f, 2f)
-                        popup.menu.setGroupCheckable(2, true, true)
-                        speeds.forEachIndexed { idx, speed ->
-                            val lbl = if (speed == 1f) "Normal (1×)" else "${speed}×"
-                            popup.menu.add(2, 100 + idx, 10 + idx, lbl).also { item ->
-                                item.isCheckable = true
-                                item.isChecked = (speed == currentSpeed)
-                            }
-                        }
-
-                        // ── Audio Tracks (only if multiple tracks exist) ───────────────
-                        val trackList = availableAudioTracks
-                        if (trackList.size > 1) {
-                            popup.menu.add(3, 200, 30, "— Audio Track —").also { it.isEnabled = false }
-                            popup.menu.setGroupCheckable(4, true, true)
-                            trackList.forEachIndexed { idx, triple ->
-                                popup.menu.add(4, 300 + idx, 40 + idx, triple.third).also { item ->
-                                    item.isCheckable = true
-                                    item.isChecked = (triple.first == selectedAudioGroupIdx &&
-                                            triple.second == selectedAudioTrackIdx)
-                                }
-                            }
-                        }
-
-                        // ── Subtitles ──────────────────────────────────────────────────
-                        val subList = availableSubtitleTracks
-                        popup.menu.add(5, 400, 50, "— Subtitles —").also { it.isEnabled = false }
-                        popup.menu.setGroupCheckable(6, true, true)
-
-                        // Option 1: None
-                        popup.menu.add(6, 401, 51, "None").also { item ->
-                            item.isCheckable = true
-                            item.isChecked = isSubtitlesDisabled
-                        }
-
-                        // Option 2: Embedded/Sidecar tracks
-                        subList.forEachIndexed { idx, triple ->
-                            popup.menu.add(6, 402 + idx, 52 + idx, triple.third).also { item ->
-                                item.isCheckable = true
-                                item.isChecked = (triple.first == selectedSubtitleGroupIdx &&
-                                        triple.second == selectedSubtitleTrackIdx)
-                            }
-                        }
-
-                        // Option 3: Manual file picker
-                        popup.menu.add(7, 600, 100, "Select subtitle file...")
-
-                        popup.setOnMenuItemClickListener { item ->
-                            when {
-                                item.itemId == 0 -> {
-                                    onEnterPip()
-                                    true
-                                }
-                                item.itemId == 500 -> {
-                                    try {
-                                        anchorView.context.startActivity(
-                                            FileUtils.getShareFileIntent(anchorView.context, file)
-                                        )
-                                    } catch (_: Exception) {}
-                                    true
-                                }
-                                item.itemId in 100..105 -> {
-                                    val speed = speeds[item.itemId - 100]
-                                    currentSpeed = speed
-                                    try { exoPlayer.setPlaybackSpeed(speed) } catch (_: Exception) {}
-                                    true
-                                }
-                                item.itemId in 300..399 -> {
-                                    val info = trackList.getOrNull(item.itemId - 300)
-                                    if (info != null) {
-                                        try {
-                                            val tracks = exoPlayer.currentTracks
-                                            var cnt = 0
-                                            for (group in tracks.groups) {
-                                                if (group.type == C.TRACK_TYPE_AUDIO) {
-                                                    if (cnt == info.first) {
-                                                        exoPlayer.trackSelectionParameters =
-                                                            exoPlayer.trackSelectionParameters
-                                                                .buildUpon()
-                                                                .setOverrideForType(
-                                                                    TrackSelectionOverride(
-                                                                        group.mediaTrackGroup,
-                                                                        info.second
-                                                                    )
-                                                                ).build()
-                                                        selectedAudioGroupIdx = info.first
-                                                        selectedAudioTrackIdx = info.second
-                                                        break
-                                                    }
-                                                    cnt++
-                                                }
-                                            }
-                                        } catch (_: Exception) {}
-                                    }
-                                    true
-                                }
-                                item.itemId == 401 -> {
-                                    // Disable subtitles
-                                    try {
-                                        exoPlayer.trackSelectionParameters =
-                                            exoPlayer.trackSelectionParameters
-                                                .buildUpon()
-                                                .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true)
-                                                .build()
-                                        isSubtitlesDisabled = true
-                                        selectedSubtitleGroupIdx = -1
-                                        selectedSubtitleTrackIdx = -1
-                                    } catch (_: Exception) {}
-                                    true
-                                }
-                                item.itemId in 402..599 -> {
-                                    val info = subList.getOrNull(item.itemId - 402)
-                                    if (info != null) {
-                                        try {
-                                            val tracks = exoPlayer.currentTracks
-                                            var cnt = 0
-                                            for (group in tracks.groups) {
-                                                if (group.type == C.TRACK_TYPE_TEXT) {
-                                                    if (cnt == info.first) {
-                                                        exoPlayer.trackSelectionParameters =
-                                                            exoPlayer.trackSelectionParameters
-                                                                .buildUpon()
-                                                                .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
-                                                                .setOverrideForType(
-                                                                    TrackSelectionOverride(
-                                                                        group.mediaTrackGroup,
-                                                                        info.second
-                                                                    )
-                                                                ).build()
-                                                        selectedSubtitleGroupIdx = info.first
-                                                        selectedSubtitleTrackIdx = info.second
-                                                        isSubtitlesDisabled = false
-                                                        break
-                                                    }
-                                                    cnt++
-                                                }
-                                            }
-                                        } catch (_: Exception) {}
-                                    }
-                                    true
-                                }
-                                item.itemId == 600 -> {
-                                    subtitlePickerLauncher.launch(arrayOf("application/x-subrip", "text/plain", "*/*"))
-                                    true
-                                }
-                                else -> false
-                            }
-                        }
-                        popup.show()
+                    settingsBtn?.setOnClickListener {
+                        showVideoSettings = true
                     }
                 } catch (_: Exception) {}
             },
@@ -2732,6 +2582,97 @@ private fun VideoPage(
                     fontWeight = FontWeight.SemiBold
                 )
             }
+        }
+
+        // ── Video settings horizontal overlay ────────────────────────────────
+        if (showVideoSettings && !isInPipMode) {
+            VideoSettingsOverlay(
+                exoPlayer               = exoPlayer,
+                file                    = file,
+                currentSpeed            = currentSpeed,
+                onSpeedChange           = { speed: Float ->
+                    currentSpeed = speed
+                    try { exoPlayer.setPlaybackSpeed(speed) } catch (_: Exception) {}
+                },
+                availableAudioTracks    = availableAudioTracks,
+                selectedAudioGroupIdx   = selectedAudioGroupIdx,
+                selectedAudioTrackIdx   = selectedAudioTrackIdx,
+                onAudioTrackChange      = { group: Int, track: Int ->
+                    try {
+                        val tracks = exoPlayer.currentTracks
+                        var cnt = 0
+                        for (g in tracks.groups) {
+                            if (g.type == C.TRACK_TYPE_AUDIO) {
+                                if (cnt == group) {
+                                    exoPlayer.trackSelectionParameters =
+                                        exoPlayer.trackSelectionParameters
+                                            .buildUpon()
+                                            .setOverrideForType(
+                                                TrackSelectionOverride(
+                                                    g.mediaTrackGroup,
+                                                    track
+                                                )
+                                            ).build()
+                                    selectedAudioGroupIdx = group
+                                    selectedAudioTrackIdx = track
+                                    break
+                                }
+                                cnt++
+                            }
+                        }
+                    } catch (_: Exception) {}
+                },
+                availableSubtitleTracks = availableSubtitleTracks,
+                selectedSubtitleGroupIdx= selectedSubtitleGroupIdx,
+                selectedSubtitleTrackIdx= selectedSubtitleTrackIdx,
+                isSubtitlesDisabled     = isSubtitlesDisabled,
+                onSubtitleTrackChange   = { group: Int, track: Int ->
+                    if (group == -1) {
+                        // Disable
+                        try {
+                            exoPlayer.trackSelectionParameters =
+                                exoPlayer.trackSelectionParameters
+                                    .buildUpon()
+                                    .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true)
+                                    .build()
+                            isSubtitlesDisabled = true
+                            selectedSubtitleGroupIdx = -1
+                            selectedSubtitleTrackIdx = -1
+                        } catch (_: Exception) {}
+                    } else {
+                        try {
+                            val tracks = exoPlayer.currentTracks
+                            var cnt = 0
+                            for (g in tracks.groups) {
+                                if (g.type == C.TRACK_TYPE_TEXT) {
+                                    if (cnt == group) {
+                                        exoPlayer.trackSelectionParameters =
+                                            exoPlayer.trackSelectionParameters
+                                                .buildUpon()
+                                                .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
+                                                .setOverrideForType(
+                                                    TrackSelectionOverride(
+                                                        g.mediaTrackGroup,
+                                                        track
+                                                    )
+                                                ).build()
+                                        selectedSubtitleGroupIdx = group
+                                        selectedSubtitleTrackIdx = track
+                                        isSubtitlesDisabled = false
+                                        break
+                                    }
+                                    cnt++
+                                }
+                            }
+                        } catch (_: Exception) {}
+                    }
+                },
+                onSelectExternalSubtitle= {
+                    subtitlePickerLauncher.launch(arrayOf("application/x-subrip", "text/plain", "*/*"))
+                },
+                onEnterPip              = onEnterPip,
+                onDismiss               = { showVideoSettings = false }
+            )
         }
     }
 }
@@ -3199,4 +3140,266 @@ private fun loadAlbumArt(file: File): Bitmap? {
         } catch (_: Exception) {
         }
     }
+}
+
+// ── Video settings horizontal overlay ────────────────────────────────────────
+
+@Composable
+private fun VideoSettingsOverlay(
+    exoPlayer: ExoPlayer,
+    file: File,
+    currentSpeed: Float,
+    onSpeedChange: (Float) -> Unit,
+    availableAudioTracks: List<Triple<Int, Int, String>>,
+    selectedAudioGroupIdx: Int,
+    selectedAudioTrackIdx: Int,
+    onAudioTrackChange: (Int, Int) -> Unit,
+    availableSubtitleTracks: List<Triple<Int, Int, String>>,
+    selectedSubtitleGroupIdx: Int,
+    selectedSubtitleTrackIdx: Int,
+    isSubtitlesDisabled: Boolean,
+    onSubtitleTrackChange: (Int, Int) -> Unit,
+    onSelectExternalSubtitle: () -> Unit,
+    onEnterPip: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    Box(modifier = Modifier.fillMaxSize()) {
+        // Dimmed background
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color.Black.copy(alpha = 0.5f))
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null
+                ) { onDismiss() }
+        )
+
+        // Menu container
+        androidx.compose.material3.Surface(
+            modifier = Modifier
+                .fillMaxWidth()
+                .fillMaxHeight(0.75f)
+                .align(Alignment.BottomCenter),
+            shape = RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp),
+            color = Color(0xFF1A1A1A),
+            contentColor = Color.White
+        ) {
+            Column(modifier = Modifier.fillMaxSize()) {
+                // Header
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "Video Settings",
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.Bold
+                    )
+                    IconButton(onClick = onDismiss) {
+                        Icon(Icons.Default.Close, contentDescription = "Close")
+                    }
+                }
+
+                androidx.compose.material3.HorizontalDivider(color = Color.White.copy(alpha = 0.1f))
+
+                // Horizontal sections
+                Row(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(16.dp)
+                ) {
+                    // Right to Left Sequence as requested:
+                    // [PiP/Share] | [Speed] | [Audio] | [Subtitles]
+                    // We'll use weights to divide them equally
+
+                    // 1. PiP and Share
+                    SettingsSection(
+                        title = "Actions",
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        SettingsItem(
+                            label = "Picture in Picture",
+                            icon = Icons.Default.PictureInPictureAlt,
+                            onClick = { onEnterPip() }
+                        )
+                        SettingsItem(
+                            label = "Share",
+                            icon = Icons.Default.Share,
+                            isShare = true,
+                            file = file
+                        )
+                    }
+
+                    VerticalDivider()
+
+                    // 2. Playback Speed
+                    val speeds = listOf(0.5f, 0.75f, 1f, 1.25f, 1.5f, 2f)
+                    SettingsSection(
+                        title = "Speed",
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        speeds.forEach { speed ->
+                            val lbl = if (speed == 1f) "Normal" else "${speed}×"
+                            SettingsItem(
+                                label = lbl,
+                                isSelected = speed == currentSpeed,
+                                onClick = { onSpeedChange(speed) }
+                            )
+                        }
+                    }
+
+                    VerticalDivider()
+
+                    // 3. Audio Tracks
+                    SettingsSection(
+                        title = "Audio",
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        if (availableAudioTracks.isEmpty()) {
+                            Text(
+                                "No tracks",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = Color.White.copy(alpha = 0.5f)
+                            )
+                        }
+                        availableAudioTracks.forEach { triple ->
+                            SettingsItem(
+                                label = triple.third,
+                                isSelected = triple.first == selectedAudioGroupIdx && triple.second == selectedAudioTrackIdx,
+                                onClick = { onAudioTrackChange(triple.first, triple.second) }
+                            )
+                        }
+                    }
+
+                    VerticalDivider()
+
+                    // 4. Subtitles
+                    SettingsSection(
+                        title = "Subtitles",
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        SettingsItem(
+                            label = "None",
+                            isSelected = isSubtitlesDisabled,
+                            onClick = { onSubtitleTrackChange(-1, -1) }
+                        )
+                        availableSubtitleTracks.forEach { triple ->
+                            SettingsItem(
+                                label = triple.third,
+                                isSelected = triple.first == selectedSubtitleGroupIdx && triple.second == selectedSubtitleTrackIdx,
+                                onClick = { onSubtitleTrackChange(triple.first, triple.second) }
+                            )
+                        }
+                        androidx.compose.material3.HorizontalDivider(
+                            modifier = Modifier.padding(vertical = 8.dp),
+                            color = Color.White.copy(alpha = 0.1f)
+                        )
+                        SettingsItem(
+                            label = "Select file...",
+                            onClick = onSelectExternalSubtitle
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SettingsSection(
+    title: String,
+    modifier: Modifier = Modifier,
+    content: @Composable ColumnScope.() -> Unit
+) {
+    Column(
+        modifier = modifier.padding(horizontal = 8.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp)
+    ) {
+        Text(
+            text = title,
+            style = MaterialTheme.typography.labelMedium,
+            color = Color.White.copy(alpha = 0.6f),
+            fontWeight = FontWeight.Bold,
+            modifier = Modifier.padding(bottom = 8.dp)
+        )
+        androidx.compose.foundation.lazy.LazyColumn(
+            verticalArrangement = Arrangement.spacedBy(2.dp),
+            modifier = Modifier.weight(1f)
+        ) {
+            item {
+                Column {
+                    content()
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SettingsItem(
+    label: String,
+    icon: androidx.compose.ui.graphics.vector.ImageVector? = null,
+    isSelected: Boolean = false,
+    onClick: () -> Unit = {},
+    isShare: Boolean = false,
+    file: File? = null
+) {
+    val context = LocalContext.current
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(8.dp))
+            .background(if (isSelected) Color.White.copy(alpha = 0.15f) else Color.Transparent)
+            .clickable {
+                if (isShare && file != null) {
+                    try {
+                        context.startActivity(FileUtils.getShareFileIntent(context, file))
+                    } catch (_: Exception) {}
+                } else {
+                    onClick()
+                }
+            }
+            .padding(vertical = 10.dp, horizontal = 12.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        if (icon != null) {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                modifier = Modifier.size(18.dp),
+                tint = if (isSelected) MaterialTheme.colorScheme.primary else Color.White
+            )
+            Spacer(Modifier.width(12.dp))
+        }
+        Text(
+            text = label,
+            style = MaterialTheme.typography.bodyMedium,
+            color = if (isSelected) MaterialTheme.colorScheme.primary else Color.White,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f)
+        )
+        if (isSelected) {
+            Icon(
+                imageVector = Icons.Default.Check,
+                contentDescription = "Selected",
+                modifier = Modifier.size(16.dp),
+                tint = MaterialTheme.colorScheme.primary
+            )
+        }
+    }
+}
+
+@Composable
+private fun VerticalDivider() {
+    Box(
+        modifier = Modifier
+            .fillMaxHeight()
+            .width(1.dp)
+            .background(Color.White.copy(alpha = 0.1f))
+    )
 }
