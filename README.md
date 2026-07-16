@@ -27,13 +27,13 @@ A fully native Android file manager that goes beyond just listing files. It comb
 - 👁️ **Show / hide hidden files** — toggle visibility of dot-prefixed files and folders; hidden items render at 50% opacity so they're clearly distinguishable
 - 📄 **Full filenames with extensions** — up to 2-line wrap so nothing gets truncated
 - 📊 **File metadata** — file size, last modified date; folders show item count and direct-file sizes
-- 🎞️ **Video playback progress** — video files show a thin progress bar + percentage under the filename so you know where you left off at a glance
+- 🎞️ **Video playback progress** — video files show a thin progress bar + percentage under the filename so you know where you left off at a glance; shows 100% for completed videos
 - ⭐ **Favorite star badge** — starred files display a gold star badge right in the file list
 - 🔢 **Paginated loading** — loads 200 items initially, then 150 more per chunk; more items load automatically as you scroll down
 - 🔄 **Pull-to-refresh** — pull down anywhere in a folder to reload its contents instantly
 - 🧩 **List / Grid view switcher** — quickly toggle between compact list view and visual grid view from the explorer menus
 - 🔃 **File sorting** — ⋮ menu → **Sort by Name / Date Modified / Date Created / Size / Type**; tap the same option again to toggle ascending ↑ / descending ↓ order; current direction shown with an arrow indicator
-- 📄 **PDF reading progress** — PDF files show an inline reading-progress percentage (e.g. `43%`) in the file list, updated every time you return from the viewer
+- 📄 **PDF reading progress** — PDF files show an inline reading-progress percentage (e.g. `43%`) in the file list, updated every time you return from the viewer; shows 100% when the last page is reached
 - 🎵 **Quick music access** — ▶ button in the top bar reopens the last-played track in the music player without browsing to it manually
 - ⬅️ **Double-back to exit** — pressing back from the root folder shows *"Press back again to exit"*; a second press within 2 seconds closes the app
 
@@ -119,6 +119,7 @@ The hamburger menu (≡) gives you quick access to organized views of your devic
 
 - 🔆 **Brightness gesture** — swipe up/down on the **left** half of the screen to adjust screen brightness
 - 🔊 **Volume gesture** — swipe up/down on the **right** half to adjust media volume
+- ⚙️ **Horizontal Settings Menu** — a persistent, horizontally-divided overlay (75% screen height) for quick access to **Actions (PiP, Share)**, **Playback Speed**, **Audio Tracks**, and **Subtitles**; switching options doesn't close the menu, allowing for multiple adjustments in one go
 - ⏩ **Double-tap seek** — double-tap the left half to rewind 10 seconds; double-tap the right half to fast-forward 10 seconds
 - ⚡ **Long-press speed boost** — hold anywhere on the video to play at 1.5× speed; release to return to normal speed
 - 💾 **Resume playback** — automatically remembers where you stopped in every video file and resumes from that exact position next time you open it
@@ -158,6 +159,8 @@ The hamburger menu (≡) gives you quick access to organized views of your devic
 ## 📄 PDF Viewer
 
 - 📖 **Dedicated PDF screen** — opens any PDF file in a full-screen reader
+- 🔢 **Go to Page** — tap the page counter (e.g. "4 / 12") in the top bar to open a jump-to-page dialog and navigate instantly to any page
+- 📤 **Export PDF** — save a copy of the currently opened PDF to any location on your device via the system file picker (Download icon in the top bar)
 - 👆 **Immersive toggle** — tap the screen to show/hide the top bar for distraction-free reading
 - 🚫 **No cross-PDF swiping** — PDFs open independently; swiping doesn't jump to other PDFs in the same folder
 
