@@ -87,6 +87,7 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.launch
 import java.io.File
 
 // ── Open document holder ─────────────────────────────────────────────────────
@@ -168,6 +169,8 @@ fun PdfViewerScreen(
     /** NativePdfRenderer must not be called concurrently — serialise via this mutex. */
     val renderMutex = remember { Mutex() }
     var showPasswordDialog by remember { mutableStateOf(false) }
+    var showGoToPageDialog by remember { mutableStateOf(false) }
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
 
     // ── Immersive / system-bar state ─────────────────────────────────────
     var isImmersive by remember { mutableStateOf(false) }
@@ -341,6 +344,21 @@ fun PdfViewerScreen(
         mutableIntStateOf(if (pageCount > 0) 1 else 0)
     }
 
+    // ── Go to page dialog ────────────────────────────────────────────────
+    if (showGoToPageDialog && pageCount > 0) {
+        GoToPageDialog(
+            pageCount   = pageCount,
+            currentPage = currentPageNumber,
+            onConfirm   = { page ->
+                showGoToPageDialog = false
+                scope.launch {
+                    listState.scrollToItem(page - 1)
+                }
+            },
+            onDismiss = { showGoToPageDialog = false }
+        )
+    }
+
     LaunchedEffect(listState, pageCount) {
         if (pageCount <= 0) {
             currentPageNumber = 0
@@ -427,7 +445,16 @@ fun PdfViewerScreen(
             val toolbarOverlayColor = Color(0x80424242) // 50% opaque grey
             TopAppBar(
                 title = {
-                    Column {
+                    Column(
+                        modifier = Modifier
+                            .clickable(
+                                enabled = pageCount > 0,
+                                interactionSource = remember { MutableInteractionSource() },
+                                indication = null
+                            ) {
+                                showGoToPageDialog = true
+                            }
+                    ) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             if (isPasswordProtected && isLoaded) {
                                 Icon(
@@ -534,6 +561,56 @@ private fun PdfPasswordDialog(
                 onClick  = { if (password.isNotEmpty()) onConfirm(password) },
                 enabled  = password.isNotEmpty()
             ) { Text("Open") }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cancel") }
+        }
+    )
+}
+
+// ── Go to page dialog ───────────────────────────────────────────────────────
+
+@Composable
+private fun GoToPageDialog(
+    pageCount: Int,
+    currentPage: Int,
+    onConfirm: (Int) -> Unit,
+    onDismiss: () -> Unit
+) {
+    var pageInput by remember { mutableStateOf(currentPage.toString()) }
+    val isValid = pageInput.toIntOrNull()?.let { it in 1..pageCount } ?: false
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Go to Page") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    text  = "Enter page number (1-$pageCount)",
+                    style = MaterialTheme.typography.bodyMedium
+                )
+                OutlinedTextField(
+                    value         = pageInput,
+                    onValueChange = { if (it.all { char -> char.isDigit() }) pageInput = it },
+                    label         = { Text("Page") },
+                    singleLine    = true,
+                    isError       = pageInput.isNotEmpty() && !isValid,
+                    keyboardOptions = KeyboardOptions(
+                        keyboardType = KeyboardType.Number,
+                        imeAction    = ImeAction.Go
+                    ),
+                    keyboardActions = KeyboardActions(
+                        onGo = { if (isValid) onConfirm(pageInput.toInt()) }
+                    ),
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick  = { if (isValid) onConfirm(pageInput.toInt()) },
+                enabled  = isValid
+            ) { Text("Go") }
         },
         dismissButton = {
             TextButton(onClick = onDismiss) { Text("Cancel") }
