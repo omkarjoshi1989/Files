@@ -1,0 +1,4 @@
+- [x] Fix stale captures for brightness and volume in `MediaViewerScreen.kt`
+- [x] Refactor brightness drag logic in `MediaViewerScreen.kt`
+- [x] Refactor volume drag logic in `MediaViewerScreen.kt`
+- [x] Verify build

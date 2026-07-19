@@ -14,6 +14,7 @@ import android.view.ViewGroup
 import android.view.WindowManager
 import android.widget.FrameLayout
 import androidx.annotation.OptIn
+import kotlin.OptIn as KotlinOptIn
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -39,6 +40,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.pager.HorizontalPager
@@ -60,9 +62,12 @@ import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SkipPrevious
+import androidx.compose.material.icons.filled.FastForward
+import androidx.compose.material.icons.filled.FastRewind
 import androidx.compose.foundation.shape.CircleShape
 // Shuffle removed: no import
 import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -78,6 +83,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
@@ -1896,6 +1902,9 @@ private fun VideoPage(
     autoPlay: Boolean = true,
     onPlayingChanged: (Boolean) -> Unit = {}
 ) {
+    val currentBrightness by rememberUpdatedState(brightness)
+    val currentOnBrightnessChange by rememberUpdatedState(onBrightnessChange)
+
     val context = LocalContext.current
     val mediaUri = remember(file.absolutePath) { android.net.Uri.fromFile(file) }
     val smbDataSourceFactory = remember { SmbSeekableDataSourceFactory(context) }
@@ -2343,11 +2352,41 @@ private fun VideoPage(
             .background(Color.Black),
         contentAlignment = Alignment.Center
     ) {
+        // ── Hoisted volume state ────────────────────────────────────────
+        val audioManager = remember(context) {
+            context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        }
+        val maxVolume = remember(audioManager) {
+            audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC).coerceAtLeast(1)
+        }
+        var rawVolume by remember(audioManager) {
+            mutableIntStateOf(audioManager.getStreamVolume(AudioManager.STREAM_MUSIC))
+        }
+
         var controlsVisible by remember { mutableStateOf(true) }
         var playerViewRef by remember { mutableStateOf<PlayerView?>(null) }
         var widthPx by remember { mutableIntStateOf(0) }
+        var heightPx by remember { mutableIntStateOf(0) }
         var speedBoostActive by remember { mutableStateOf(false) }
         var showVideoSettings by remember { mutableStateOf(false) }
+
+        // Swipe HUD States
+        var showBrightnessHud by remember { mutableStateOf(false) }
+        var showVolumeHud by remember { mutableStateOf(false) }
+        var hudBrightnessValue by remember { mutableStateOf(brightness) }
+        var hudVolumeValue by remember { mutableStateOf(rawVolume.toFloat() / maxVolume.toFloat()) }
+
+        var isDraggingLeft by remember { mutableStateOf(false) }
+        var dragStartVal by remember { mutableStateOf(0f) }
+
+        // Auto-hide controls
+        LaunchedEffect(controlsVisible) {
+            if (controlsVisible) {
+                delay(3000)
+                controlsVisible = false
+                onImmersiveChange(true)
+            }
+        }
 
         // ── Background playback toggle (configured in Settings screen) ──
         val backgroundPlaybackEnabled = remember(context) {
@@ -2365,16 +2404,6 @@ private fun VideoPage(
             onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
         }
 
-        // ── Hoisted volume state ────────────────────────────────────────
-        val audioManager = remember(context) {
-            context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
-        }
-        val maxVolume = remember(audioManager) {
-            audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC).coerceAtLeast(1)
-        }
-        var rawVolume by remember(audioManager) {
-            mutableIntStateOf(audioManager.getStreamVolume(AudioManager.STREAM_MUSIC))
-        }
         DisposableEffect(audioManager) {
             val observer = object : ContentObserver(Handler(Looper.getMainLooper())) {
                 override fun onChange(selfChange: Boolean) {
@@ -2395,24 +2424,10 @@ private fun VideoPage(
             factory = { ctx ->
                 PlayerView(ctx).apply {
                     player = exoPlayer
-                    useController = true
-                    controllerAutoShow = true
-                    controllerShowTimeoutMs = 3000
-                    controllerHideOnTouch = true
-                    setShowNextButton(false)
-                    setShowPreviousButton(false)
-                    setShowFastForwardButton(true)
-                    setShowRewindButton(true)
+                    useController = false
                     layoutParams = FrameLayout.LayoutParams(
                         ViewGroup.LayoutParams.MATCH_PARENT,
                         ViewGroup.LayoutParams.MATCH_PARENT
-                    )
-                    setControllerVisibilityListener(
-                        PlayerView.ControllerVisibilityListener { visibility ->
-                            val visible = visibility == android.view.View.VISIBLE
-                            controlsVisible = visible
-                            onImmersiveChange(!visible)
-                        }
                     )
                     playerViewRef = this
                 }
@@ -2420,86 +2435,142 @@ private fun VideoPage(
             update = { playerView ->
                 playerView.player = exoPlayer
                 playerViewRef = playerView
-                // ── Inject PiP into ExoPlayer's existing gear/settings popup ──────────
-                // We find the built-in settings button and replace its click listener with
-                // one that shows a native PopupMenu containing PiP, speed, and audio options.
-                try {
-                    val settingsBtn = playerView.findViewById<android.view.View>(
-                        androidx.media3.ui.R.id.exo_settings
-                    )
-                    settingsBtn?.setOnClickListener {
-                        showVideoSettings = true
-                    }
-                } catch (_: Exception) {}
             },
             modifier = Modifier.fillMaxSize()
         )
 
-        // Hide the ExoPlayer built-in controller while in PiP (it is too small to use).
-        // Restore auto-show behaviour when returning to full-screen.
-        LaunchedEffect(isInPipMode) {
-            val pv = playerViewRef
-            if (pv != null) {
-                if (isInPipMode) {
-                    pv.hideController()
-                    pv.controllerAutoShow = false
-                } else {
-                    pv.controllerAutoShow = true
-                }
-            }
-        }
-
-        // Tap overlay (active only while controller is hidden): single tap
-        // re-shows the controller; double-tap on the left half rewinds 10s,
-        // on the right half fast-forwards 10s. When the controller IS
-        // visible, this Box is a passive layer so taps on play/pause/seek
-        // inside PlayerView are not intercepted.
+        // Gesture overlay: Always active for double-tap & drag gestures
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .onSizeChanged { widthPx = it.width }
-                .then(
-                    if (!controlsVisible) {
-                        Modifier.pointerInput(exoPlayer) {
-                            var boostActive = false
-                            detectTapGestures(
-                                onPress = {
-                                    tryAwaitRelease()
-                                    if (boostActive) {
-                                        try { exoPlayer.setPlaybackSpeed(1f) } catch (_: Exception) {}
-                                        boostActive = false
-                                        speedBoostActive = false
-                                    }
-                                },
-                                onLongPress = {
-                                    if (exoPlayer.isPlaying) {
-                                        try { exoPlayer.setPlaybackSpeed(1.5f) } catch (_: Exception) {}
-                                        boostActive = true
-                                        speedBoostActive = true
-                                    }
-                                },
-                                onTap = {
-                                    playerViewRef?.showController()
-                                },
-                                onDoubleTap = { offset ->
-                                    if (widthPx > 0) {
-                                        val isLeft = offset.x < widthPx / 2f
-                                        val duration = exoPlayer.duration
-                                        val current = exoPlayer.currentPosition
-                                        val target = if (isLeft) {
-                                            (current - 10_000L).coerceAtLeast(0L)
-                                        } else {
-                                            val upper = if (duration > 0) duration else Long.MAX_VALUE
-                                            (current + 10_000L).coerceAtMost(upper)
-                                        }
-                                        exoPlayer.seekTo(target)
+                .onSizeChanged { 
+                    widthPx = it.width
+                    heightPx = it.height
+                }
+                .pointerInput(exoPlayer, heightPx) {
+                    var accumulatedDelta = 0f
+                    detectVerticalDragGestures(
+                        onDragStart = { offset ->
+                            if (widthPx > 0) {
+                                accumulatedDelta = 0f
+                                isDraggingLeft = offset.x < widthPx / 2f
+                                if (isDraggingLeft) {
+                                    dragStartVal = currentBrightness
+                                    hudBrightnessValue = currentBrightness
+                                    showBrightnessHud = true
+                                } else {
+                                    val currentVol = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
+                                    dragStartVal = currentVol.toFloat() / maxVolume.toFloat()
+                                    hudVolumeValue = dragStartVal
+                                    showVolumeHud = true
+                                }
+                            }
+                        },
+                        onVerticalDrag = { change, dragAmount ->
+                            change.consume()
+                            if (heightPx > 0) {
+                                accumulatedDelta += dragAmount
+                                val totalDeltaPercent = -accumulatedDelta / heightPx.toFloat()
+                                val newVal = (dragStartVal + totalDeltaPercent).coerceIn(0f, 1f)
+
+                                if (isDraggingLeft) {
+                                    hudBrightnessValue = newVal
+                                    currentOnBrightnessChange(newVal)
+                                } else {
+                                    hudVolumeValue = newVal
+                                    val newVolume = (newVal * maxVolume).toInt().coerceIn(0, maxVolume)
+                                    if (newVolume != rawVolume) {
+                                        rawVolume = newVolume
+                                        try {
+                                            audioManager.setStreamVolume(
+                                                AudioManager.STREAM_MUSIC,
+                                                newVolume,
+                                                0
+                                            )
+                                        } catch (_: SecurityException) {}
+                                        hudVolumeValue = newVolume.toFloat() / maxVolume.toFloat()
                                     }
                                 }
-                            )
+                            }
+                        },
+                        onDragEnd = {
+                            showBrightnessHud = false
+                            showVolumeHud = false
+                        },
+                        onDragCancel = {
+                            showBrightnessHud = false
+                            showVolumeHud = false
                         }
-                    } else Modifier
-                )
+                    )
+                }
+                .pointerInput(exoPlayer) {
+                    var boostActive = false
+                    detectTapGestures(
+                        onPress = {
+                            tryAwaitRelease()
+                            if (boostActive) {
+                                try { exoPlayer.setPlaybackSpeed(1f) } catch (_: Exception) {}
+                                boostActive = false
+                                speedBoostActive = false
+                            }
+                        },
+                        onLongPress = {
+                            if (exoPlayer.isPlaying) {
+                                try { exoPlayer.setPlaybackSpeed(1.5f) } catch (_: Exception) {}
+                                boostActive = true
+                                speedBoostActive = true
+                            }
+                        },
+                        onTap = {
+                            controlsVisible = !controlsVisible
+                            onImmersiveChange(!controlsVisible)
+                        },
+                        onDoubleTap = { offset ->
+                            if (widthPx > 0) {
+                                val isLeft = offset.x < widthPx / 2f
+                                val duration = exoPlayer.duration
+                                val current = exoPlayer.currentPosition
+                                val target = if (isLeft) {
+                                    (current - 10_000L).coerceAtLeast(0L)
+                                } else {
+                                    val upper = if (duration > 0) duration else Long.MAX_VALUE
+                                    (current + 10_000L).coerceAtMost(upper)
+                                }
+                                exoPlayer.seekTo(target)
+                            }
+                        }
+                    )
+                }
         )
+
+        // ── Side HUDs (Brightness & Volume) ──────────────────────────────────
+        AnimatedVisibility(
+            visible = showBrightnessHud,
+            enter = fadeIn(),
+            exit = fadeOut(),
+            modifier = Modifier
+                .align(Alignment.CenterStart)
+                .padding(start = 32.dp)
+        ) {
+            VerticalSideHudBar(
+                value = hudBrightnessValue,
+                icon = Icons.Filled.BrightnessHigh
+            )
+        }
+
+        AnimatedVisibility(
+            visible = showVolumeHud,
+            enter = fadeIn(),
+            exit = fadeOut(),
+            modifier = Modifier
+                .align(Alignment.CenterEnd)
+                .padding(end = 32.dp)
+        ) {
+            VerticalSideHudBar(
+                value = hudVolumeValue,
+                icon = Icons.AutoMirrored.Filled.VolumeUp
+            )
+        }
 
         AnimatedVisibility(
             visible = controlsVisible && !isInPipMode,
@@ -2512,51 +2583,12 @@ private fun VideoPage(
                     .fillMaxSize()
                     .systemBarsPadding()
             ) {
-                // Brightness + Volume sliders on the right edge
-                Row(
-                    modifier = Modifier
-                        .align(Alignment.CenterEnd)
-                        .padding(end = 12.dp),
-                    horizontalArrangement = Arrangement.spacedBy(4.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    VerticalSliderColumn(
-                        icon = {
-                            Icon(
-                                imageVector = Icons.Filled.BrightnessHigh,
-                                contentDescription = "Brightness",
-                                tint = Color.White,
-                                modifier = Modifier.size(24.dp)
-                            )
-                        },
-                        value = brightness,
-                        onValueChange = { onBrightnessChange(it) }
-                    )
-                    VerticalSliderColumn(
-                        icon = {
-                            Icon(
-                                imageVector = Icons.AutoMirrored.Filled.VolumeUp,
-                                contentDescription = "Volume",
-                                tint = Color.White,
-                                modifier = Modifier.size(24.dp)
-                            )
-                        },
-                        value = rawVolume.toFloat() / maxVolume.toFloat(),
-                        onValueChange = { f ->
-                            val newVolume = (f * maxVolume).toInt().coerceIn(0, maxVolume)
-                            if (newVolume != rawVolume) {
-                                rawVolume = newVolume
-                                try {
-                                    audioManager.setStreamVolume(
-                                        AudioManager.STREAM_MUSIC,
-                                        newVolume,
-                                        0
-                                    )
-                                } catch (_: SecurityException) {}
-                            }
-                        }
-                    )
-                }
+                // Custom Video Controls at bottom
+                VideoControls(
+                    exoPlayer = exoPlayer,
+                    onSettingsClick = { showVideoSettings = true },
+                    modifier = Modifier.align(Alignment.BottomCenter)
+                )
             }
         }
 
@@ -2677,42 +2709,121 @@ private fun VideoPage(
     }
 }
 
-@kotlin.OptIn(ExperimentalMaterial3Api::class)
+@KotlinOptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun VerticalSliderColumn(
-    icon: @Composable () -> Unit,
-    value: Float,
-    onValueChange: (Float) -> Unit,
+private fun VideoControls(
+    exoPlayer: ExoPlayer,
+    onSettingsClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    var currentPos by remember { mutableLongStateOf(exoPlayer.currentPosition) }
+    var duration by remember { mutableLongStateOf(exoPlayer.duration.coerceAtLeast(0L)) }
+    var isDragging by remember { mutableStateOf(false) }
+
+    LaunchedEffect(exoPlayer, isDragging) {
+        while (!isDragging) {
+            currentPos = exoPlayer.currentPosition
+            duration = exoPlayer.duration.coerceAtLeast(0L)
+            delay(500)
+        }
+    }
+
     Column(
         modifier = modifier
-            .width(48.dp)
-            .pointerInput(Unit) { },
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center
+            .fillMaxWidth()
+            .background(Color.Black.copy(alpha = 0.5f))
+            .padding(vertical = 8.dp, horizontal = 16.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        icon()
-        Spacer(modifier = Modifier.height(8.dp))
+        // Seekbar
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = formatTime(currentPos),
+                color = Color.White,
+                fontSize = 12.sp,
+                modifier = Modifier.width(45.dp)
+            )
+            Slider(
+                value = if (duration > 0) currentPos.toFloat() / duration.toFloat() else 0f,
+                onValueChange = {
+                    isDragging = true
+                    currentPos = (it * duration).toLong()
+                },
+                onValueChangeFinished = {
+                    exoPlayer.seekTo(currentPos)
+                    isDragging = false
+                },
+                modifier = Modifier.weight(1f),
+                colors = SliderDefaults.colors(
+                    thumbColor = Color.White,
+                    activeTrackColor = Color.White,
+                    inactiveTrackColor = Color.White.copy(alpha = 0.3f)
+                )
+            )
+            Text(
+                text = formatTime(duration),
+                color = Color.White,
+                fontSize = 12.sp,
+                modifier = Modifier.width(45.dp),
+                textAlign = TextAlign.End
+            )
+        }
+
+        // Buttons
         Box(
-            modifier = Modifier.size(width = 48.dp, height = 220.dp),
+            modifier = Modifier.fillMaxWidth(),
             contentAlignment = Alignment.Center
         ) {
-            Slider(
-                value = value.coerceIn(0f, 1f),
-                onValueChange = onValueChange,
-                valueRange = 0f..1f,
-                thumb = {
-                    Box(
-                        modifier = Modifier
-                            .size(20.dp)
-                            .background(MaterialTheme.colorScheme.primary, CircleShape)
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(24.dp)
+            ) {
+                // Rewind
+                IconButton(onClick = { exoPlayer.seekTo((exoPlayer.currentPosition - 10000).coerceAtLeast(0)) }) {
+                    Icon(
+                        imageVector = Icons.Filled.FastRewind,
+                        contentDescription = "Rewind",
+                        tint = Color.White,
+                        modifier = Modifier.size(32.dp)
                     )
-                },
-                modifier = Modifier
-                    .graphicsLayer { rotationZ = -90f }
-                    .requiredSize(width = 220.dp, height = 48.dp)
-            )
+                }
+                // Play/Pause
+                IconButton(
+                    onClick = { if (exoPlayer.isPlaying) exoPlayer.pause() else exoPlayer.play() },
+                    modifier = Modifier.size(48.dp)
+                ) {
+                    Icon(
+                        imageVector = if (exoPlayer.isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
+                        contentDescription = "Play/Pause",
+                        tint = Color.White,
+                        modifier = Modifier.size(40.dp)
+                    )
+                }
+                // Fast Forward
+                IconButton(onClick = { exoPlayer.seekTo((exoPlayer.currentPosition + 10000).coerceAtMost(exoPlayer.duration)) }) {
+                    Icon(
+                        imageVector = Icons.Filled.FastForward,
+                        contentDescription = "Fast Forward",
+                        tint = Color.White,
+                        modifier = Modifier.size(32.dp)
+                    )
+                }
+            }
+
+            // Settings button (aligned right)
+            IconButton(
+                onClick = onSettingsClick,
+                modifier = Modifier.align(Alignment.CenterEnd)
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.Settings,
+                    contentDescription = "Settings",
+                    tint = Color.White
+                )
+            }
         }
     }
 }
@@ -3403,3 +3514,53 @@ private fun VerticalDivider() {
             .background(Color.White.copy(alpha = 0.1f))
     )
 }
+
+@Composable
+private fun VerticalSideHudBar(
+    value: Float,
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    modifier: Modifier = Modifier
+) {
+    Column(
+        modifier = modifier
+            .width(42.dp)
+            .height(180.dp)
+            .clip(RoundedCornerShape(21.dp))
+            .background(Color.Black.copy(alpha = 0.5f))
+            .padding(vertical = 12.dp, horizontal = 4.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Bottom
+    ) {
+        Box(
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxWidth()
+                .padding(bottom = 12.dp),
+            contentAlignment = Alignment.BottomCenter
+        ) {
+            // Track
+            Box(
+                modifier = Modifier
+                    .fillMaxHeight()
+                    .width(4.dp)
+                    .clip(CircleShape)
+                    .background(Color.White.copy(alpha = 0.2f))
+            )
+            // Progress
+            Box(
+                modifier = Modifier
+                    .fillMaxHeight(value.coerceIn(0f, 1f))
+                    .width(4.dp)
+                    .clip(CircleShape)
+                    .background(Color.White)
+            )
+        }
+        Icon(
+            imageVector = icon,
+            contentDescription = null,
+            tint = Color.White,
+            modifier = Modifier.size(24.dp)
+        )
+    }
+}
+
