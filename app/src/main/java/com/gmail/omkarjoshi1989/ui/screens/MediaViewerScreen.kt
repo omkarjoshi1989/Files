@@ -97,6 +97,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.IntSize
 import android.content.res.Configuration
 import androidx.compose.ui.platform.LocalConfiguration
@@ -2719,6 +2720,7 @@ private fun VideoControls(
     var currentPos by remember { mutableLongStateOf(exoPlayer.currentPosition) }
     var duration by remember { mutableLongStateOf(exoPlayer.duration.coerceAtLeast(0L)) }
     var isDragging by remember { mutableStateOf(false) }
+    var showRemainingTime by remember { mutableStateOf(false) }
 
     LaunchedEffect(exoPlayer, isDragging) {
         while (!isDragging) {
@@ -2732,45 +2734,77 @@ private fun VideoControls(
         modifier = modifier
             .fillMaxWidth()
             .background(Color.Black.copy(alpha = 0.5f))
-            .padding(vertical = 8.dp, horizontal = 16.dp),
+            .padding(top = 8.dp, bottom = 12.dp, start = 16.dp, end = 16.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        // Seekbar
+        // Time labels above seekbar
         Row(
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 4.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text(
                 text = formatTime(currentPos),
                 color = Color.White,
-                fontSize = 12.sp,
-                modifier = Modifier.width(45.dp)
-            )
-            Slider(
-                value = if (duration > 0) currentPos.toFloat() / duration.toFloat() else 0f,
-                onValueChange = {
-                    isDragging = true
-                    currentPos = (it * duration).toLong()
-                },
-                onValueChangeFinished = {
-                    exoPlayer.seekTo(currentPos)
-                    isDragging = false
-                },
-                modifier = Modifier.weight(1f),
-                colors = SliderDefaults.colors(
-                    thumbColor = Color.White,
-                    activeTrackColor = Color.White,
-                    inactiveTrackColor = Color.White.copy(alpha = 0.3f)
-                )
+                fontSize = 13.sp,
+                fontWeight = FontWeight.Medium
             )
             Text(
-                text = formatTime(duration),
+                text = if (showRemainingTime) "- ${formatTime(duration - currentPos)}" else formatTime(duration),
                 color = Color.White,
-                fontSize = 12.sp,
-                modifier = Modifier.width(45.dp),
-                textAlign = TextAlign.End
+                fontSize = 13.sp,
+                fontWeight = FontWeight.Medium,
+                modifier = Modifier.clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null
+                ) {
+                    showRemainingTime = !showRemainingTime
+                }
             )
         }
+
+        // Seekbar
+        val sliderInteractionSource = remember { MutableInteractionSource() }
+        Slider(
+            value = if (duration > 0) currentPos.toFloat() / duration.toFloat() else 0f,
+            onValueChange = {
+                isDragging = true
+                currentPos = (it * duration).toLong()
+            },
+            onValueChangeFinished = {
+                exoPlayer.seekTo(currentPos)
+                isDragging = false
+            },
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(32.dp),
+            interactionSource = sliderInteractionSource,
+            thumb = {
+                SliderDefaults.Thumb(
+                    interactionSource = sliderInteractionSource,
+                    thumbSize = DpSize(14.dp, 14.dp),
+                    colors = SliderDefaults.colors(thumbColor = Color(0xFFFF8800))
+                )
+            },
+            track = { sliderState ->
+                SliderDefaults.Track(
+                    sliderState = sliderState,
+                    colors = SliderDefaults.colors(
+                        activeTrackColor = Color(0xFFFF8800),
+                        inactiveTrackColor = Color.White.copy(alpha = 0.3f)
+                    )
+                )
+            },
+            colors = SliderDefaults.colors(
+                thumbColor = Color(0xFFFF8800),
+                activeTrackColor = Color(0xFFFF8800),
+                inactiveTrackColor = Color.White.copy(alpha = 0.3f)
+            )
+        )
+
+        Spacer(modifier = Modifier.height(8.dp))
 
         // Buttons
         Box(
@@ -3230,11 +3264,17 @@ private fun stripNumericPrefix(name: String): String {
 }
 
 private fun formatTime(ms: Long): String {
-    if (ms <= 0) return "0:00"
-    val totalSeconds = ms / 1000
-    val minutes = totalSeconds / 60
+    val totalMs = if (ms < 0) 0 else ms
+    val totalSeconds = totalMs / 1000
+    val hours = totalSeconds / 3600
+    val minutes = (totalSeconds % 3600) / 60
     val seconds = totalSeconds % 60
-    return "$minutes:${seconds.toString().padStart(2, '0')}"
+
+    return if (hours > 0) {
+        "$hours:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}"
+    } else {
+        "$minutes:${seconds.toString().padStart(2, '0')}"
+    }
 }
 
 private fun loadAlbumArt(file: File): Bitmap? {

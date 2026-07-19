@@ -1,4 +1,4 @@
-- [x] Fix stale captures for brightness and volume in `MediaViewerScreen.kt`
-- [x] Refactor brightness drag logic in `MediaViewerScreen.kt`
-- [x] Refactor volume drag logic in `MediaViewerScreen.kt`
+- [x] Add `DpSize` import to `MediaViewerScreen.kt`
+- [x] Initialize `interactionSource` in `VideoControls`
+- [x] Refactor `Slider` to use circular `Thumb` and adjusted track height
 - [x] Verify build

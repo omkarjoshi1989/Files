@@ -1,33 +1,32 @@
-# Fix Video Brightness and Volume Gesture Stability
+# Update Video Seekbar to Circular Knob (VLC Style)
 
-Improve the smoothness and reliability of the vertical drag gestures for brightness and volume in the video player.
+Change the seekbar thumb from a cursor-like line to a circular knob and adjust track thickness to match VLC's style.
 
 ## User Review Required
 
-> [!IMPORTANT]
-> This change fixes the "jumping" behavior where brightness would reset to an old value at the start of a new drag. It also makes the adjustment more gradual by using an accumulated delta approach.
+> [!NOTE]
+> I will be using a custom `thumb` for the `Slider` to ensure it appears as a solid circular knob. I will also slightly increase the track thickness to better match the VLC screenshot.
 
 ## Proposed Changes
 
 ### [MediaViewerScreen.kt](file:///C:/Users/Admin/AndroidStudioProjects/Files/app/src/main/java/com/gmail/omkarjoshi1989/ui/screens/MediaViewerScreen.kt)
 
-#### [MODIFY] [VideoPage](file:///C:/Users/Admin/AndroidStudioProjects/Files/app/src/main/java/com/gmail/omkarjoshi1989/ui/screens/MediaViewerScreen.kt)
+#### [MODIFY] [VideoControls](file:///C:/Users/Admin/AndroidStudioProjects/Files/app/src/main/java/com/gmail/omkarjoshi1989/ui/screens/MediaViewerScreen.kt)
 
-1.  **Fix Stale Captures**:
-    *   Wrap `brightness` and `onBrightnessChange` in `rememberUpdatedState` to allow `pointerInput` lambdas to access the current values without needing to restart the gesture detection.
-2.  **Refactor Drag Logic**:
-    *   Change the logic to capture `initialValue` at `onDragStart`.
-    *   In `onVerticalDrag`, calculate the `newVal` as `initialValue + (totalDelta / height)`.
-    *   This prevents the "irregular" jumps and ensures the brightness always starts from the *actual* current level.
-3.  **Apply to Volume**:
-    *   Apply the same stable logic to volume adjustment for consistency.
+1.  **Add `DpSize` Import**: Add `import androidx.compose.ui.unit.DpSize` to the imports.
+2.  **Initialize `interactionSource`**: Add `val sliderInteractionSource = remember { MutableInteractionSource() }` within `VideoControls`.
+3.  **Customize `Slider`**:
+    *   Add `interactionSource = sliderInteractionSource`.
+    *   Provide a custom `thumb` using `SliderDefaults.Thumb` with `thumbSize = DpSize(12.dp, 12.dp)`.
+    *   Provide a custom `track` using `SliderDefaults.Track` (if available) or a simplified version to ensure no gaps and appropriate thickness.
+    *   Maintain the `#FF8800` (VLC orange) color scheme.
 
 ## Verification Plan
 
 ### Automated Tests
-*   Run `:app:compileDebugKotlin` to verify no regressions.
+*   Run `:app:compileDebugKotlin` to verify the build.
 
 ### Manual Verification
 *   Open a video.
-*   Adjust brightness, release, and start adjusting again: verify it continues from the new level without jumping back.
-*   Verify that dragging up and then down within the same gesture behaves smoothly and predictably.
+*   Verify the seekbar thumb is a circular orange knob.
+*   Verify the track thickness matches the VLC style more closely.

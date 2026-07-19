@@ -1,6 +1,6 @@
-# Walkthrough - Fixed Video Brightness and Volume Gesture Stability
+# Walkthrough - VLC-Style Circular Seekbar Knob
 
-Improved the smoothness and reliability of vertical drag gestures for brightness and volume in the video player by implementing an accumulated delta approach and fixing stale state captures.
+Updated the video seekbar to use a solid circular knob (thumb) and standard track thickness to match the VLC player's visual style.
 
 ## Changes Made
 
@@ -8,13 +8,10 @@ Improved the smoothness and reliability of vertical drag gestures for brightness
 
 #### [MediaViewerScreen.kt](file:///C:/Users/Admin/AndroidStudioProjects/Files/app/src/main/java/com/gmail/omkarjoshi1989/ui/screens/MediaViewerScreen.kt)
 
-- Added `rememberUpdatedState` for `brightness` and `onBrightnessChange` parameters. This ensures that the gesture detection lambda, which is often `remember`ed for the lifetime of the composable or a specific key, always uses the latest values from the parent state without needing to be restarted.
-- Refactored the vertical drag gesture logic in `VideoPage`:
-    - Introduced `accumulatedDelta` to track the total drag distance within a single gesture.
-    - Captures the initial brightness or volume at the start of the drag (`onDragStart`).
-    - Calculates the new value based on the total accumulated drag relative to the screen height.
-    - This eliminates the "jumping" behavior where the value would jitter or reset if the drag was slow or interrupted.
-- Ensured volume adjustments are relative to the *actual* current system volume at the moment the drag starts, improving accuracy when hardware buttons are used between gestures.
+- **Custom Seekbar Thumb**: Replaced the default cursor-like thumb with a circular orange knob using `SliderDefaults.Thumb`.
+- **Thumb Sizing**: Set the thumb size to `14.dp x 14.dp` to match the prominent look in the VLC screenshot.
+- **Interaction Handling**: Added `MutableInteractionSource` to the `Slider` and `Thumb` to ensure proper visual feedback and alignment.
+- **Track Styling**: Explicitly defined the `track` slot using `SliderDefaults.Track` to maintain the VLC orange and white color scheme consistently across the entire component.
 
 ## Verification Results
 
@@ -22,6 +19,5 @@ Improved the smoothness and reliability of vertical drag gestures for brightness
 - Executed `:app:compileDebugKotlin` - **Passed**
 
 ### Manual Verification
-- Verified that starting a brightness drag now correctly picks up from the current level.
-- Verified that fast and slow vertical swipes result in smooth, predictable changes to both brightness and volume HUDs.
-- Verified that the "jump" issue (where brightness would snap back to a previous value at the start of a drag) is resolved.
+- Verified the seekbar thumb is now a solid circular orange knob.
+- Verified the seekbar remains fully functional and smooth.
