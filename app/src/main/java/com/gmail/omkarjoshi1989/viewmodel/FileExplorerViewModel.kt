@@ -794,6 +794,13 @@ class FileExplorerViewModel(application: Application) : AndroidViewModel(applica
         val opVerb    = if (isCut) "Moving" else "Copying"
         val doneVerb  = if (isCut) "Moved"  else "Copied"
 
+        // ── Snapshot the destination folder at the moment paste is invoked ──
+        // This MUST NOT be re-read from _currentPath.value later, otherwise if
+        // the user navigates to other folders while the background copy is
+        // still running, files would be scattered into whatever folder is
+        // currently open instead of the folder the user actually pasted into.
+        val destinationPath = _currentPath.value
+
         // ── Dismiss the clipboard FAB immediately so the bottom UI disappears ──
         _clipboard.value = null
 
@@ -827,7 +834,7 @@ class FileExplorerViewModel(application: Application) : AndroidViewModel(applica
                             total = 1,
                             fileName = sourceFile.name,
                             sourcePath = sourceFile.parentFile?.absolutePath.orEmpty(),
-                            destinationPath = _currentPath.value
+                            destinationPath = destinationPath
                         )
                     }
 
@@ -842,7 +849,7 @@ class FileExplorerViewModel(application: Application) : AndroidViewModel(applica
                                 total = 1,
                                 fileName = sourceFile.name,
                                 sourcePath = sourceFile.parentFile?.absolutePath.orEmpty(),
-                                destinationPath = _currentPath.value
+                                destinationPath = destinationPath
                             )
                         }
 
@@ -855,7 +862,7 @@ class FileExplorerViewModel(application: Application) : AndroidViewModel(applica
                             total   = total
                         )
 
-                        val destination = File(_currentPath.value, sourceFile.name)
+                        val destination = File(destinationPath, sourceFile.name)
                         if (sourceFile.absolutePath == destination.absolutePath) {
                             if (operationId != null) {
                                 BackgroundOperationsManager.complete(
@@ -866,7 +873,7 @@ class FileExplorerViewModel(application: Application) : AndroidViewModel(applica
                                     total = 1,
                                     fileName = sourceFile.name,
                                     sourcePath = sourceFile.parentFile?.absolutePath.orEmpty(),
-                                    destinationPath = _currentPath.value
+                                    destinationPath = destinationPath
                                 )
                             }
                             return@forEachIndexed
@@ -882,7 +889,7 @@ class FileExplorerViewModel(application: Application) : AndroidViewModel(applica
                                     total = 1,
                                     fileName = sourceFile.name,
                                     sourcePath = sourceFile.parentFile?.absolutePath.orEmpty(),
-                                    destinationPath = _currentPath.value
+                                    destinationPath = destinationPath
                                 )
                             }
                             return@forEachIndexed
@@ -908,7 +915,7 @@ class FileExplorerViewModel(application: Application) : AndroidViewModel(applica
                             }
                         }.onSuccess {
                             if (operationId != null) {
-                                val destFolder = File(_currentPath.value).name
+                                val destFolder = File(destinationPath).name
                                 BackgroundOperationsManager.complete(
                                     id = operationId,
                                     title = "$doneVerb item",
@@ -917,7 +924,7 @@ class FileExplorerViewModel(application: Application) : AndroidViewModel(applica
                                     total = 1,
                                     fileName = sourceFile.name,
                                     sourcePath = sourceFile.parentFile?.absolutePath.orEmpty(),
-                                    destinationPath = _currentPath.value
+                                    destinationPath = destinationPath
                                 )
                             }
                         }.onFailure { err ->
@@ -930,14 +937,14 @@ class FileExplorerViewModel(application: Application) : AndroidViewModel(applica
                                     total = 1,
                                     fileName = sourceFile.name,
                                     sourcePath = sourceFile.parentFile?.absolutePath.orEmpty(),
-                                    destinationPath = _currentPath.value
+                                    destinationPath = destinationPath
                                 )
                             }
                         }
                     }
                 }
 
-                val destFolder = File(_currentPath.value).name
+                val destFolder = File(destinationPath).name
                 val completionText = if (total == 1)
                     "${clipData.files[0].name} → $destFolder"
                 else

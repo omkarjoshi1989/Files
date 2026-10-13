@@ -1,6 +1,7 @@
 package com.gmail.omkarjoshi1989.ui.screens
 
 import android.content.Context
+import android.content.Intent
 import android.content.res.Configuration
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
@@ -774,7 +775,10 @@ private fun MusicAudioPage(
                         style = MaterialTheme.typography.bodySmall,
                         textAlign = TextAlign.Center,
                         maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.clickable {
+                            openFolderInFileExplorer(context, file.parentFile?.absolutePath)
+                        }
                     )
 
                     Spacer(modifier = Modifier.height(4.dp))
@@ -887,7 +891,10 @@ private fun MusicAudioPage(
                     style = MaterialTheme.typography.bodySmall,
                     textAlign = TextAlign.Center,
                     maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.clickable {
+                        openFolderInFileExplorer(context, file.parentFile?.absolutePath)
+                    }
                 )
 
                 Spacer(modifier = Modifier.height(4.dp))
@@ -1045,7 +1052,7 @@ private fun MusicControlsRow(
 ) {
     val repeatActive = repeatMode == Player.REPEAT_MODE_ONE
 
-    // Controls column height: Prev/Play/Next (76dp) + Spacer (16dp) + Repeat/Volume (52dp) = 144dp
+    // Controls column height: Prev/Play/Pause/Next (76dp) + Spacer (16dp) + Repeat/Volume (52dp) = 144dp
     // The volume slider Box uses offset(y) to appear 8dp below the column without shifting layout.
     Box(modifier = Modifier.fillMaxWidth()) {
         Column(
@@ -1228,3 +1235,21 @@ private fun musicLoadAlbumArt(file: File): Bitmap? {
         }
     }
 }
+
+/**
+ * Launches [com.gmail.omkarjoshi1989.FileExplorerActivity] and navigates it to
+ * [folderPath]. Uses CLEAR_TOP + SINGLE_TOP so an already-running instance is
+ * brought back to the front instead of being duplicated.
+ */
+private fun openFolderInFileExplorer(context: Context, folderPath: String?) {
+    if (folderPath.isNullOrBlank()) return
+    val intent = Intent(context, com.gmail.omkarjoshi1989.FileExplorerActivity::class.java).apply {
+        putExtra(
+            com.gmail.omkarjoshi1989.FileExplorerActivity.EXTRA_NAVIGATE_TO_FOLDER,
+            folderPath
+        )
+        addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+    }
+    context.startActivity(intent)
+}
+

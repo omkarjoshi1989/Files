@@ -13,6 +13,11 @@ import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.calculatePan
+import androidx.compose.foundation.gestures.calculateZoom
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -57,6 +62,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
@@ -67,6 +73,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -405,26 +413,86 @@ fun PdfViewerScreen(
             }
 
             isLoaded && pageCount > 0 -> {
-                LazyColumn(
-                    state = listState,
-                    modifier = Modifier.fillMaxSize(),
-                    contentPadding = PaddingValues(
-                        top    = topContentPadding,
-                        bottom = navBarPadding + 8.dp,
-                        start  = 8.dp,
-                        end    = 8.dp
-                    ),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                // ── Zoom / pan state ──────────────────────────────────────
+                // Pinch (2-finger) zooms; when zoomed, 2-finger pan translates.
+                // Double-tap toggles between 1x and 2.5x.
+                // Single-finger drag is left untouched so LazyColumn scrolling
+                // continues to work in both zoomed and un-zoomed states.
+                var scale   by remember { mutableFloatStateOf(1f) }
+                var offsetX by remember { mutableFloatStateOf(0f) }
+                var offsetY by remember { mutableFloatStateOf(0f) }
+                val minScale = 1f
+                val maxScale = 5f
+
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        // Double-tap to toggle zoom
+                        .pointerInput(Unit) {
+                            detectTapGestures(
+                                onDoubleTap = {
+                                    if (scale > 1f) {
+                                        scale = 1f
+                                        offsetX = 0f
+                                        offsetY = 0f
+                                    } else {
+                                        scale = 2.5f
+                                    }
+                                }
+                            )
+                        }
+                        // Two-finger pinch-to-zoom + pan
+                        .pointerInput(Unit) {
+                            awaitEachGesture {
+                                awaitFirstDown(requireUnconsumed = false)
+                                do {
+                                    val event = awaitPointerEvent()
+                                    if (event.changes.size >= 2) {
+                                        val zoom = event.calculateZoom()
+                                        val pan  = event.calculatePan()
+                                        val newScale = (scale * zoom).coerceIn(minScale, maxScale)
+                                        scale = newScale
+                                        if (scale > 1f) {
+                                            offsetX += pan.x
+                                            offsetY += pan.y
+                                        } else {
+                                            offsetX = 0f
+                                            offsetY = 0f
+                                        }
+                                        event.changes.forEach { it.consume() }
+                                    }
+                                } while (event.changes.any { it.pressed })
+                            }
+                        }
                 ) {
-                    items(pageCount) { pageIndex ->
-                        PdfPageItem(
-                            displayName       = displayName,
-                            pageIndex         = pageIndex,
-                            confirmedPassword = submittedPassword,
-                            openDoc           = openDoc,
-                            renderMutex       = renderMutex,
-                            onTap             = { isImmersive = !isImmersive }
-                        )
+                    LazyColumn(
+                        state = listState,
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .graphicsLayer {
+                                scaleX = scale
+                                scaleY = scale
+                                translationX = offsetX
+                                translationY = offsetY
+                            },
+                        contentPadding = PaddingValues(
+                            top    = topContentPadding,
+                            bottom = navBarPadding + 8.dp,
+                            start  = 8.dp,
+                            end    = 8.dp
+                        ),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        items(pageCount) { pageIndex ->
+                            PdfPageItem(
+                                displayName       = displayName,
+                                pageIndex         = pageIndex,
+                                confirmedPassword = submittedPassword,
+                                openDoc           = openDoc,
+                                renderMutex       = renderMutex,
+                                onTap             = { isImmersive = !isImmersive }
+                            )
+                        }
                     }
                 }
             }

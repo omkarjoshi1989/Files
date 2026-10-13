@@ -2040,6 +2040,21 @@ private fun VideoPage(
 
                 val mediaSource = mediaSourceFactory.createMediaSource(mediaItem)
                 exoPlayer.setMediaSource(mediaSource, resumePosition)
+                // Default subtitles to NONE on every new video: disable the TEXT track
+                // type before prepare() so no embedded or sidecar subtitle is auto-selected
+                // (even ones flagged SELECTION_FLAG_DEFAULT).  The user can still turn
+                // subtitles on manually from the settings sheet.
+                try {
+                    exoPlayer.trackSelectionParameters =
+                        exoPlayer.trackSelectionParameters
+                            .buildUpon()
+                            .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true)
+                            .clearOverridesOfType(C.TRACK_TYPE_TEXT)
+                            .build()
+                } catch (_: Exception) {}
+                isSubtitlesDisabled = true
+                selectedSubtitleGroupIdx = -1
+                selectedSubtitleTrackIdx = -1
                 exoPlayer.prepare()
                 // Reset playback speed for the new file (unless just reloading for subtitles)
                 if (!needsRebuild) {

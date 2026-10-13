@@ -68,7 +68,12 @@ class FileExplorerActivity : ComponentActivity() {
 
     companion object {
         const val EXTRA_OPEN_BACKGROUND_OPERATIONS = "extra_open_background_operations"
+        /** Absolute folder path to navigate to as soon as the FILE_EXPLORER screen appears. */
+        const val EXTRA_NAVIGATE_TO_FOLDER = "extra_navigate_to_folder"
     }
+
+    /** One-shot folder path pulled from the launching intent — consumed by a LaunchedEffect. */
+    private var pendingNavigatePath by mutableStateOf<String?>(null)
 
     private var hasStoragePermission by mutableStateOf(false)
     private var isAuthenticated by mutableStateOf(false)
@@ -137,6 +142,15 @@ class FileExplorerActivity : ComponentActivity() {
                     // Hoist the main file-explorer view-model above the `when` block so that
                     // other screens (e.g. GlobalSearchScreen) can navigate into a folder.
                     val fileViewModel: FileExplorerViewModel = viewModel()
+
+                    // If launched with EXTRA_NAVIGATE_TO_FOLDER, jump the file explorer
+                    // to that folder as soon as the view-model exists.
+                    LaunchedEffect(pendingNavigatePath) {
+                        pendingNavigatePath?.let { path ->
+                            fileViewModel.navigateTo(path)
+                            pendingNavigatePath = null
+                        }
+                    }
                     when (currentScreen) {
                         Screen.FILE_EXPLORER -> {
 
@@ -385,6 +399,7 @@ class FileExplorerActivity : ComponentActivity() {
             .unregisterOnSharedPreferenceChangeListener(prefsListener)
     }
 
+
     override fun onResume() {
         super.onResume()
         checkPermission()
@@ -401,6 +416,10 @@ class FileExplorerActivity : ComponentActivity() {
     private fun handleNavigationIntent(intent: Intent?) {
         if (intent?.getBooleanExtra(EXTRA_OPEN_BACKGROUND_OPERATIONS, false) == true) {
             currentScreen = Screen.BACKGROUND_OPERATIONS
+        }
+        intent?.getStringExtra(EXTRA_NAVIGATE_TO_FOLDER)?.let { path ->
+            pendingNavigatePath = path
+            currentScreen = Screen.FILE_EXPLORER
         }
     }
 
