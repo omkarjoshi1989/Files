@@ -106,6 +106,7 @@ fun SmbFileExplorerScreen(
     onNavigateBack: () -> Unit,
     onOpenFile: (File) -> Unit,
     onNavigateToFavorites: () -> Unit,
+    onNavigateToGallery: (() -> Unit)? = null,
     onNavigateToApplications: () -> Unit,
     onNavigateToSettings: () -> Unit,
     onNavigateToRecycleBin: () -> Unit,
@@ -181,6 +182,7 @@ fun SmbFileExplorerScreen(
                 onNavigateToRecycleBin  = { scope.launch { drawerState.close() }; onNavigateToRecycleBin() },
                 onNavigateToBackgroundOperations = { scope.launch { drawerState.close() }; onNavigateToBackgroundOperations() },
                 onNavigateToFavorites   = { scope.launch { drawerState.close() }; onNavigateToFavorites() },
+                onNavigateToGallery = { scope.launch { drawerState.close() }; onNavigateToGallery?.invoke() },
                 onNavigateToSettings    = { scope.launch { drawerState.close() }; onNavigateToSettings() },
                 smbConnections = smbConnections,
                 onAddSmbConnection = {

@@ -196,6 +196,7 @@ class FileExplorerActivity : ComponentActivity() {
                                     }
                                 },
                                 onNavigateToFavorites = { currentScreen = Screen.FAVORITES },
+                                onNavigateToGallery = { openGallery() },
                                 onNavigateToApplications = { currentScreen = Screen.APPLICATIONS },
                                 onNavigateToSettings = { currentScreen = Screen.SETTINGS },
                                 onNavigateToRecycleBin = { currentScreen = Screen.RECYCLE_BIN },
@@ -238,6 +239,7 @@ class FileExplorerActivity : ComponentActivity() {
                                     }
                                 },
                                 onNavigateToFavorites = { currentScreen = Screen.FAVORITES },
+                                onNavigateToGallery = { openGallery() },
                                 onNavigateToApplications = { currentScreen = Screen.APPLICATIONS },
                                 onNavigateToSettings = { currentScreen = Screen.SETTINGS },
                                 onNavigateToRecycleBin = { currentScreen = Screen.RECYCLE_BIN },
@@ -326,6 +328,7 @@ class FileExplorerActivity : ComponentActivity() {
                                     onNavigateBack = { currentScreen = Screen.FILE_EXPLORER },
                                     onOpenFile = { file -> openFile(file, null) },
                                     onNavigateToFavorites = { currentScreen = Screen.FAVORITES },
+                                    onNavigateToGallery = { openGallery() },
                                     onNavigateToApplications = { currentScreen = Screen.APPLICATIONS },
                                     onNavigateToSettings = { currentScreen = Screen.SETTINGS },
                                     onNavigateToRecycleBin = { currentScreen = Screen.RECYCLE_BIN },
@@ -511,6 +514,10 @@ class FileExplorerActivity : ComponentActivity() {
                 Toast.makeText(this, "No app found to open this file", Toast.LENGTH_SHORT).show()
             }
         }
+    }
+
+    private fun openGallery() {
+        startActivity(Intent(this, GalleryActivity::class.java))
     }
 
     /**

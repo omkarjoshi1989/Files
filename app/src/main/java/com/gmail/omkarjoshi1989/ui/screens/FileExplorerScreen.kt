@@ -170,6 +170,7 @@ fun FileExplorerScreen(
     onOpenFile: (File) -> Unit,
     onNavigateBack: () -> Unit,
     onNavigateToFavorites: () -> Unit,
+    onNavigateToGallery: (() -> Unit)? = null,
     onNavigateToApplications: () -> Unit,
     onNavigateToSettings: () -> Unit,
     onNavigateToRecycleBin: () -> Unit,
@@ -316,6 +317,10 @@ fun FileExplorerScreen(
                 onNavigateToFavorites = {
                     coroutineScope.launch { drawerState.close() }
                     onNavigateToFavorites()
+                },
+                onNavigateToGallery = {
+                    coroutineScope.launch { drawerState.close() }
+                    onNavigateToGallery?.invoke()
                 },
                 onNavigateToSettings = {
                     coroutineScope.launch { drawerState.close() }
@@ -1146,6 +1151,7 @@ internal fun AppNavigationDrawer(
     onNavigateToRecycleBin: () -> Unit,
     onNavigateToBackgroundOperations: () -> Unit,
     onNavigateToFavorites: () -> Unit,
+    onNavigateToGallery: (() -> Unit)? = null,
     onNavigateToSettings: () -> Unit,
     smbConnections: List<SmbConnectionConfig>,
     onAddSmbConnection: () -> Unit,
@@ -1291,6 +1297,15 @@ internal fun AppNavigationDrawer(
                     label = { Text("Music") },
                     selected = currentCollectionFilter == CollectionType.MUSIC,
                     onClick = { onNavigateToCollection(CollectionType.MUSIC) },
+                    modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding)
+                )
+            }
+            item {
+                NavigationDrawerItem(
+                    icon = { Icon(Icons.Filled.Collections, contentDescription = null) },
+                    label = { Text("Gallery") },
+                    selected = false,
+                    onClick = { onNavigateToGallery?.invoke() },
                     modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding)
                 )
             }
