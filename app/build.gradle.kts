@@ -1,3 +1,5 @@
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
@@ -15,10 +17,21 @@ android {
         applicationId = "com.gmail.omkarjoshi1989"
         minSdk = 24
         targetSdk = 36
-        versionCode = 261120
-        versionName = "11.20"
+        versionCode = 261121
+        versionName = "11.21"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+        // Supabase credentials come from local.properties (never committed):
+        //   supabase.url=https://xxxx.supabase.co
+        //   supabase.anonKey=eyJ...
+        val localProps = Properties().apply {
+            val f = rootProject.file("local.properties")
+            if (f.exists()) f.inputStream().use { load(it) }
+        }
+        fun esc(s: String) = s.replace("\\", "\\\\").replace("\"", "\\\"")
+        buildConfigField("String", "SUPABASE_URL", "\"${esc(localProps.getProperty("supabase.url", ""))}\"")
+        buildConfigField("String", "SUPABASE_ANON_KEY", "\"${esc(localProps.getProperty("supabase.anonKey", ""))}\"")
     }
 
     buildTypes {
@@ -33,6 +46,7 @@ android {
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_11
         targetCompatibility = JavaVersion.VERSION_11
+        isCoreLibraryDesugaringEnabled = true
     }
     buildFeatures {
         compose = true
@@ -46,6 +60,7 @@ android {
 }
 
 dependencies {
+    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.5")
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.compose.material3)

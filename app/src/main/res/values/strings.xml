@@ -1,6 +1,7 @@
 <resources>
     <string name="app_name">Files</string>
     <string name="widget_label">Music Player</string>
+    <string name="hybrid_planner_label">Hybrid Planner</string>
     <string name="widget_description">Controls music playback from the home screen</string>
     <string name="widget_no_track">No track playing</string>
     <string name="widget_album_art_desc">Album art</string>

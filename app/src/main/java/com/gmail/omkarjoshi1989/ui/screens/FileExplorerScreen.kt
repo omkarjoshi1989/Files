@@ -51,6 +51,7 @@ import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.PictureAsPdf
 import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Sort
 import androidx.compose.material.icons.filled.Storage
@@ -1153,6 +1154,7 @@ internal fun AppNavigationDrawer(
     onNavigateToFavorites: () -> Unit,
     onNavigateToGallery: (() -> Unit)? = null,
     onNavigateToSettings: () -> Unit,
+    onNavigateToHybridPlanner: (() -> Unit)? = null,
     smbConnections: List<SmbConnectionConfig>,
     onAddSmbConnection: () -> Unit,
     onEditSmbConnection: (SmbConnectionConfig) -> Unit,
@@ -1365,6 +1367,18 @@ internal fun AppNavigationDrawer(
                     onClick = onNavigateToFavorites,
                     modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding)
                 )
+            }
+
+            if (onNavigateToHybridPlanner != null) {
+                item {
+                    NavigationDrawerItem(
+                        icon = { Icon(Icons.Filled.CalendarMonth, contentDescription = null) },
+                        label = { Text("Hybrid Planner") },
+                        selected = false,
+                        onClick = onNavigateToHybridPlanner,
+                        modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding)
+                    )
+                }
             }
 
             // ── SETTINGS SECTION ─────────────────────────────────────────────
