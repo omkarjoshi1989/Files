@@ -24,7 +24,7 @@ enum class HybridDay(val dbValue: String) {
 
 /** Mirrors Supabase enum `HomeOfficeWeekend`. */
 enum class HomeOfficeWeekend(val dbValue: String) {
-    H("H"), O("O"), W("w");
+    H("H"), O("O"), W("w"), X("x");
 
     companion object {
         fun fromDb(v: String?): HomeOfficeWeekend? = entries.firstOrNull { it.dbValue == v }
@@ -38,7 +38,8 @@ enum class PlannedHybridMode(val dbValue: String, val how: HomeOfficeWeekend?) {
     LEAVE("LEAVE", HomeOfficeWeekend.O),
     HOLIDAY("HOLIDAY", HomeOfficeWeekend.O),
     WEEKEND("weekend", HomeOfficeWeekend.W),
-    COMP_OFF("comp-off", null);
+    COMP_OFF("comp-off", null),
+    NONE("none", HomeOfficeWeekend.X);
 
     companion object {
         fun fromDb(v: String?): PlannedHybridMode? = entries.firstOrNull { it.dbValue == v }

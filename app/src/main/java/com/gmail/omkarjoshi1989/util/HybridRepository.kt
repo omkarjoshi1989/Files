@@ -26,7 +26,7 @@ object HybridRepository {
     /** Default planned mode for a freshly created row. */
     fun defaultMode(date: LocalDate): PlannedHybridMode =
         if (HybridDay.of(date) == HybridDay.Saturday || HybridDay.of(date) == HybridDay.Sunday)
-            PlannedHybridMode.WEEKEND else PlannedHybridMode.HOME
+            PlannedHybridMode.WEEKEND else PlannedHybridMode.NONE
 
     /** Previous, current and next month relative to [center]. */
     fun threeMonths(center: YearMonth = YearMonth.now()): List<YearMonth> =

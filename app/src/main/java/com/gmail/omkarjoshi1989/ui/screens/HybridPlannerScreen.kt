@@ -170,7 +170,9 @@ private fun HybridRow(entry: HybridEntry, isToday: Boolean, onModeSelected: (Pla
                 // e.g. H1 / O2 / O3 : H_O_W code + running count of the selected planned mode in the month
                 val code = entry.how?.dbValue
                 Text(
-                    if (code != null) code + (entry.serial ?: "") else "",
+                    if (code == null) ""
+                    else if (entry.mode == PlannedHybridMode.NONE) code
+                    else code + (entry.serial ?: ""),
                     style = MaterialTheme.typography.titleLarge
                 )
                 entry.status?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
